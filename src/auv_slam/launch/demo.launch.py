@@ -2,9 +2,9 @@
 """
 Complete Motion Demo Launch File
 - Starts Gazebo simulation
-- Launches motion demo with 2m forward movement first
+- Launches motion demo with proper sequence
 - Shows camera view
-- Clean logging (no thrust/wrench spam)
+- Works with existing thruster mapper and other nodes
 
 Usage:
     ros2 launch auv_slam demo.launch.py
@@ -100,7 +100,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # 6. Thruster Mapper (SILENT - no thrust logging)
+    # 6. Thruster Mapper (existing one from your system)
     thruster_mapper = Node(
         package='auv_slam',
         executable='simple_thruster_mapper.py',
@@ -109,8 +109,7 @@ def generate_launch_description():
         parameters=[thruster_params, {'use_sim_time': True}]
     )
     
-    # 7. Motion Demo Node
-    # Delayed start to let simulation initialize
+    # 7. Motion Demo Node (delayed start to let simulation initialize)
     motion_demo = TimerAction(
         period=5.0,
         actions=[
@@ -124,7 +123,7 @@ def generate_launch_description():
         ]
     )
     
-    # 8. Camera View - rqt_image_view
+    # 8. Camera View (optional, delayed)
     camera_view = TimerAction(
         period=8.0,
         actions=[

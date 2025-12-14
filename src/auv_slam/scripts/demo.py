@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 AUV Motion Demonstration Script
-1. Moves forward 2m
-2. Performs 4-DOF demonstrations at -0.8m depth
-3. 5-second gaps between operations
-4. Clean logging with start/end markers
-
-Usage:
-    Launched automatically by demo.launch.py
+Sequence:
+1. Heave to -0.8m depth
+2. Roll left/right while at depth
+3. Surface to -0.2m
+4. Surge forward
+5. Surge backward
+6. Yaw left
+7. Yaw right
 """
 
 import rclpy
@@ -30,9 +31,6 @@ class MotionDemo(Node):
         self.odom_sub = self.create_subscription(
             Odometry, '/ground_truth/odom', self.odom_callback, 10)
         
-        # Target depth (negative is below water surface)
-        self.TARGET_DEPTH = -0.8  # 0.8m below water surface
-        
         # Current state
         self.current_position = None
         self.current_depth = 0.0
@@ -41,24 +39,24 @@ class MotionDemo(Node):
         self.current_yaw = 0.0
         
         # Demo parameters
-        self.motion_duration = 4.0  # seconds per motion
-        self.gap_duration = 5.0     # 5 seconds between operations
+        self.motion_duration = 5.0  # seconds per motion
+        self.gap_duration = 3.0     # gap between motions
         
-        # Depth control parameters
-        self.depth_control_gain = 2.0
+        # Depth control
+        self.depth_control_gain = 2.5
         self.depth_deadband = 0.1
         
         self.get_logger().info('='*70)
         self.get_logger().info('🚀 AUV MOTION DEMONSTRATION')
         self.get_logger().info('='*70)
-        self.get_logger().info(f'   Target depth: {self.TARGET_DEPTH}m')
         self.get_logger().info('   Sequence:')
-        self.get_logger().info('   1. Move forward 2m')
-        self.get_logger().info('   2. HEAVE demonstration')
-        self.get_logger().info('   3. SURGE demonstration')
-        self.get_logger().info('   4. YAW demonstration')
-        self.get_logger().info('   5. ROLL demonstration')
-        self.get_logger().info('   Gap between operations: 5 seconds')
+        self.get_logger().info('   1. HEAVE DOWN to -0.8m')
+        self.get_logger().info('   2. ROLL (left/right) at depth')
+        self.get_logger().info('   3. SURFACE to -0.2m')
+        self.get_logger().info('   4. SURGE FORWARD')
+        self.get_logger().info('   5. SURGE BACKWARD')
+        self.get_logger().info('   6. YAW LEFT')
+        self.get_logger().info('   7. YAW RIGHT')
         self.get_logger().info('='*70)
         
         # Wait for odometry
@@ -67,7 +65,7 @@ class MotionDemo(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
         
         self.get_logger().info('✅ Odometry ready!')
-        self.get_logger().info(f'   Starting position: X={self.current_position[0]:.2f}m, Y={self.current_position[1]:.2f}m, Z={self.current_position[2]:.2f}m')
+        self.get_logger().info(f'   Starting depth: {self.current_depth:.3f}m')
         self.get_logger().info('')
         self.get_logger().info('Starting in 3 seconds...')
         time.sleep(3)
@@ -95,18 +93,15 @@ class MotionDemo(Node):
             return 0.0
         
         z_cmd = depth_error * self.depth_control_gain
-        return max(-0.8, min(z_cmd, 0.8))
+        return max(-1.0, min(z_cmd, 1.0))
     
-    def publish_cmd(self, linear_x=0.0, linear_y=0.0, target_depth=None,
+    def publish_cmd(self, linear_x=0.0, linear_y=0.0, linear_z=0.0,
                     angular_x=0.0, angular_y=0.0, angular_z=0.0):
-        """Publish velocity command with automatic depth control"""
-        if target_depth is None:
-            target_depth = self.TARGET_DEPTH
-        
+        """Publish velocity command"""
         cmd = Twist()
         cmd.linear.x = linear_x
         cmd.linear.y = linear_y
-        cmd.linear.z = self.compute_depth_control(target_depth)
+        cmd.linear.z = linear_z
         cmd.angular.x = angular_x
         cmd.angular.y = angular_y
         cmd.angular.z = angular_z
@@ -114,211 +109,206 @@ class MotionDemo(Node):
         self.cmd_vel_pub.publish(cmd)
     
     def stop(self):
-        """Stop all motion but maintain depth"""
-        self.publish_cmd(0.0, 0.0)
+        """Stop all motion"""
+        self.publish_cmd(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     
-    def hold_depth(self, duration: float, target_depth: float = None):
+    def hold_depth(self, duration: float, target_depth: float):
         """Hold at target depth for specified duration"""
-        if target_depth is None:
-            target_depth = self.TARGET_DEPTH
-        
         start_time = time.time()
         while (time.time() - start_time) < duration:
-            self.publish_cmd(0.0, 0.0, target_depth)
+            z_cmd = self.compute_depth_control(target_depth)
+            self.publish_cmd(0.0, 0.0, z_cmd)
             rclpy.spin_once(self, timeout_sec=0.05)
     
-    def log_operation_start(self, operation_name: str, description: str):
-        """Log start of operation"""
+    def log_start(self, name: str):
+        """Log operation start"""
         self.get_logger().info('')
         self.get_logger().info('╔' + '='*68 + '╗')
-        self.get_logger().info(f'║ ▶️  STARTING: {operation_name:<54} ║')
-        self.get_logger().info(f'║     {description:<62} ║')
+        self.get_logger().info(f'║ ▶️  {name:<63} ║')
         self.get_logger().info('╚' + '='*68 + '╝')
     
-    def log_operation_end(self, operation_name: str, start_pos, final_stats: dict):
-        """Log end of operation"""
-        dx = self.current_position[0] - start_pos[0]
-        dy = self.current_position[1] - start_pos[1]
-        dz = self.current_depth - start_pos[2]
-        
-        self.get_logger().info('')
+    def log_end(self, name: str):
+        """Log operation end"""
         self.get_logger().info('╔' + '='*68 + '╗')
-        self.get_logger().info(f'║ ✅ COMPLETED: {operation_name:<53} ║')
-        self.get_logger().info(f'║     Movement: ΔX={dx:+.3f}m, ΔY={dy:+.3f}m, ΔZ={dz:+.3f}m{" "*20}║')
-        self.get_logger().info(f'║     Final Depth: {self.current_depth:.3f}m{" "*44}║')
-        if 'yaw_change' in final_stats:
-            self.get_logger().info(f'║     Yaw Change: {final_stats["yaw_change"]:+.1f}°{" "*44}║')
-        if 'roll_change' in final_stats:
-            self.get_logger().info(f'║     Roll Change: {final_stats["roll_change"]:+.1f}°{" "*43}║')
+        self.get_logger().info(f'║ ✅ COMPLETED: {name:<53} ║')
+        self.get_logger().info(f'║    Depth: {self.current_depth:.3f}m | Roll: {math.degrees(self.current_roll):+.1f}° | Yaw: {math.degrees(self.current_yaw):+.1f}°{" "*10}║')
         self.get_logger().info('╚' + '='*68 + '╝')
+        self.get_logger().info('')
     
-    def execute_operation(self, name: str, description: str,
-                         linear_x=0.0, linear_y=0.0, target_depth=None,
-                         angular_x=0.0, angular_y=0.0, angular_z=0.0,
-                         duration=None):
-        """Execute a single operation with logging"""
+    def heave_to_depth(self, target_depth: float, operation_name: str):
+        """Heave to target depth"""
+        self.log_start(operation_name)
         
-        if duration is None:
-            duration = self.motion_duration
-        
-        if target_depth is None:
-            target_depth = self.TARGET_DEPTH
-        
-        # Log start
-        self.log_operation_start(name, description)
-        
-        # Record starting values
-        start_pos = self.current_position
-        start_yaw = self.current_yaw
-        start_roll = self.current_roll
-        
-        # Execute motion
+        timeout = 20.0
         start_time = time.time()
-        while (time.time() - start_time) < duration:
-            self.publish_cmd(linear_x, linear_y, target_depth,
-                           angular_x, angular_y, angular_z)
+        
+        while abs(self.current_depth - target_depth) > 0.15:
+            if (time.time() - start_time) > timeout:
+                self.get_logger().warn('⏰ Timeout reaching target depth')
+                break
+            
+            z_cmd = self.compute_depth_control(target_depth)
+            self.publish_cmd(0.0, 0.0, z_cmd)
+            
+            # Progress update
+            elapsed = time.time() - start_time
+            if int(elapsed * 2) % 2 == 0:
+                self.get_logger().info(
+                    f'   Depth: {self.current_depth:.3f}m → Target: {target_depth:.3f}m',
+                    throttle_duration_sec=0.4
+                )
+            
+            rclpy.spin_once(self, timeout_sec=0.05)
+        
+        # Hold at depth for 2 seconds
+        self.hold_depth(2.0, target_depth)
+        
+        self.log_end(operation_name)
+        self.get_logger().info(f'⏸️  Holding depth for {self.gap_duration:.0f} seconds...')
+        self.hold_depth(self.gap_duration, target_depth)
+    
+    def execute_roll(self):
+        """Execute roll motion at depth"""
+        operation_name = "ROLL (Left/Right)"
+        self.log_start(operation_name)
+        
+        target_depth = -0.8
+        roll_speed = 0.4  # rad/s
+        duration = self.motion_duration
+        
+        # Roll RIGHT
+        self.get_logger().info('   Rolling RIGHT...')
+        roll_start = time.time()
+        while (time.time() - roll_start) < duration / 2:
+            z_cmd = self.compute_depth_control(target_depth)
+            self.publish_cmd(0.0, 0.0, z_cmd, roll_speed, 0.0, 0.0)
+            
+            elapsed = time.time() - roll_start
+            if int(elapsed * 2) % 2 == 0:
+                self.get_logger().info(
+                    f'   Depth: {self.current_depth:.3f}m | Roll: {math.degrees(self.current_roll):+.1f}°',
+                    throttle_duration_sec=0.4
+                )
+            
+            rclpy.spin_once(self, timeout_sec=0.05)
+        
+        # Stabilize
+        self.get_logger().info('   Stabilizing...')
+        self.hold_depth(1.0, target_depth)
+        
+        # Roll LEFT
+        self.get_logger().info('   Rolling LEFT...')
+        roll_start = time.time()
+        while (time.time() - roll_start) < duration / 2:
+            z_cmd = self.compute_depth_control(target_depth)
+            self.publish_cmd(0.0, 0.0, z_cmd, -roll_speed, 0.0, 0.0)
+            
+            elapsed = time.time() - roll_start
+            if int(elapsed * 2) % 2 == 0:
+                self.get_logger().info(
+                    f'   Depth: {self.current_depth:.3f}m | Roll: {math.degrees(self.current_roll):+.1f}°',
+                    throttle_duration_sec=0.4
+                )
+            
             rclpy.spin_once(self, timeout_sec=0.05)
         
         # Stop
         self.stop()
         time.sleep(0.5)
         
-        # Calculate final stats
-        final_stats = {
-            'yaw_change': math.degrees(self.current_yaw - start_yaw),
-            'roll_change': math.degrees(self.current_roll - start_roll)
-        }
-        
-        # Log end
-        self.log_operation_end(name, start_pos, final_stats)
-        
-        # Gap between operations
-        if self.gap_duration > 0:
-            self.get_logger().info('')
-            self.get_logger().info(f'⏸️  Waiting {self.gap_duration:.0f} seconds before next operation...')
-            self.hold_depth(self.gap_duration, target_depth)
+        self.log_end(operation_name)
+        self.get_logger().info(f'⏸️  Holding depth for {self.gap_duration:.0f} seconds...')
+        self.hold_depth(self.gap_duration, target_depth)
     
-    def move_forward_2m(self):
-        """Move forward approximately 2 meters"""
-        self.log_operation_start("INITIAL FORWARD MOVEMENT", "Moving 2m forward to starting position")
+    def execute_motion(self, operation_name: str, linear_x=0.0, linear_y=0.0,
+                      angular_z=0.0, maintain_depth=None, duration=None):
+        """Execute a motion with depth control"""
+        if duration is None:
+            duration = self.motion_duration
+        
+        self.log_start(operation_name)
         
         start_pos = self.current_position
-        target_distance = 2.0
+        start_time = time.time()
         
-        # Move forward until 2m traveled
-        while True:
-            dx = self.current_position[0] - start_pos[0]
-            dy = self.current_position[1] - start_pos[1]
-            distance_traveled = math.sqrt(dx*dx + dy*dy)
+        while (time.time() - start_time) < duration:
+            if maintain_depth is not None:
+                z_cmd = self.compute_depth_control(maintain_depth)
+            else:
+                z_cmd = 0.0
             
-            if distance_traveled >= target_distance:
-                break
+            self.publish_cmd(linear_x, linear_y, z_cmd, 0.0, 0.0, angular_z)
             
-            self.publish_cmd(linear_x=0.5)
+            # Progress update
+            elapsed = time.time() - start_time
+            if int(elapsed * 2) % 2 == 0:
+                if maintain_depth is not None:
+                    self.get_logger().info(
+                        f'   Depth: {self.current_depth:.3f}m | Yaw: {math.degrees(self.current_yaw):+.1f}°',
+                        throttle_duration_sec=0.4
+                    )
+                else:
+                    dx = self.current_position[0] - start_pos[0]
+                    dy = self.current_position[1] - start_pos[1]
+                    self.get_logger().info(
+                        f'   Moved: ΔX={dx:+.3f}m, ΔY={dy:+.3f}m, Depth: {self.current_depth:.3f}m',
+                        throttle_duration_sec=0.4
+                    )
+            
             rclpy.spin_once(self, timeout_sec=0.05)
         
         # Stop
         self.stop()
-        time.sleep(1.0)
+        time.sleep(0.5)
         
-        # Log completion
-        final_stats = {}
-        self.log_operation_end("INITIAL FORWARD MOVEMENT", start_pos, final_stats)
+        self.log_end(operation_name)
         
-        self.get_logger().info('')
-        self.get_logger().info(f'⏸️  Waiting {self.gap_duration:.0f} seconds before demonstrations...')
-        self.hold_depth(self.gap_duration)
+        if maintain_depth is not None:
+            self.get_logger().info(f'⏸️  Holding depth for {self.gap_duration:.0f} seconds...')
+            self.hold_depth(self.gap_duration, maintain_depth)
     
     def run_demonstration(self):
         """Run complete demonstration sequence"""
         
         try:
-            # ============================================
-            # STEP 0: SUBMERGE TO TARGET DEPTH
-            # ============================================
-            self.get_logger().info('')
-            self.get_logger().info('╔' + '='*68 + '╗')
-            self.get_logger().info('║ 📉 SUBMERGING TO TARGET DEPTH                                   ║')
-            self.get_logger().info('╚' + '='*68 + '╝')
-            self.hold_depth(duration=5.0)
-            self.get_logger().info(f'✅ At target depth: {self.current_depth:.3f}m')
-            time.sleep(2.0)
+            # 1. HEAVE DOWN to -0.8m
+            self.heave_to_depth(-0.8, "HEAVE DOWN to -0.8m")
             
-            # ============================================
-            # STEP 1: MOVE FORWARD 2M
-            # ============================================
-            self.move_forward_2m()
+            # 2. ROLL at depth
+            self.execute_roll()
             
-            # ============================================
-            # STEP 2: HEAVE DEMONSTRATION
-            # ============================================
-            self.execute_operation(
-                name="HEAVE UP",
-                description="Ascending to -0.5m (0.3m shallower)",
-                target_depth=-0.5
+            # 3. SURFACE to -0.2m
+            self.heave_to_depth(-0.2, "SURFACE to -0.2m")
+            
+            # 4. SURGE FORWARD
+            self.execute_motion(
+                "SURGE FORWARD",
+                linear_x=0.6,
+                maintain_depth=-0.2
             )
             
-            self.execute_operation(
-                name="HEAVE DOWN",
-                description="Descending to -1.1m (0.3m deeper)",
-                target_depth=-1.1
+            # 5. SURGE BACKWARD
+            self.execute_motion(
+                "SURGE BACKWARD",
+                linear_x=-0.6,
+                maintain_depth=-0.2
             )
             
-            # Return to target depth
-            self.get_logger().info('')
-            self.get_logger().info('🎯 Returning to target depth (-0.8m)...')
-            self.hold_depth(duration=3.0)
-            self.get_logger().info(f'✅ At target depth: {self.current_depth:.3f}m')
-            time.sleep(self.gap_duration)
-            
-            # ============================================
-            # STEP 3: SURGE DEMONSTRATION
-            # ============================================
-            self.execute_operation(
-                name="SURGE FORWARD",
-                description="Moving forward at 0.6 m/s (depth locked at -0.8m)",
-                linear_x=0.6
+            # 6. YAW LEFT
+            self.execute_motion(
+                "YAW LEFT (Counter-Clockwise)",
+                angular_z=0.5,
+                maintain_depth=-0.2
             )
             
-            self.execute_operation(
-                name="SURGE BACKWARD",
-                description="Moving backward at 0.6 m/s (depth locked at -0.8m)",
-                linear_x=-0.6
+            # 7. YAW RIGHT
+            self.execute_motion(
+                "YAW RIGHT (Clockwise)",
+                angular_z=-0.5,
+                maintain_depth=-0.2
             )
             
-            # ============================================
-            # STEP 4: YAW DEMONSTRATION
-            # ============================================
-            self.execute_operation(
-                name="YAW RIGHT",
-                description="Rotating clockwise at 0.5 rad/s (depth locked)",
-                angular_z=-0.5
-            )
-            
-            self.execute_operation(
-                name="YAW LEFT",
-                description="Rotating counter-clockwise at 0.5 rad/s (depth locked)",
-                angular_z=0.5
-            )
-            
-            # ============================================
-            # STEP 5: ROLL DEMONSTRATION
-            # ============================================
-            self.execute_operation(
-                name="ROLL RIGHT",
-                description="Attempting roll (limited capability due to symmetric design)",
-                angular_x=0.3
-            )
-            
-            self.execute_operation(
-                name="ROLL LEFT",
-                description="Attempting roll (limited capability due to symmetric design)",
-                angular_x=-0.3
-            )
-            
-            # ============================================
-            # FINAL: MISSION COMPLETE
-            # ============================================
+            # MISSION COMPLETE
             self.stop()
             
             self.get_logger().info('')
@@ -326,12 +316,16 @@ class MotionDemo(Node):
             self.get_logger().info('║ 🎉 MISSION COMPLETE!                                            ║')
             self.get_logger().info('╚' + '='*68 + '╝')
             self.get_logger().info('')
+            self.get_logger().info('✅ All operations completed successfully!')
+            self.get_logger().info('')
             self.get_logger().info('Summary:')
-            self.get_logger().info('  ✅ Initial forward movement: 2m')
-            self.get_logger().info('  ✅ HEAVE demonstrations: 2 operations')
-            self.get_logger().info('  ✅ SURGE demonstrations: 2 operations')
-            self.get_logger().info('  ✅ YAW demonstrations: 2 operations')
-            self.get_logger().info('  ✅ ROLL demonstrations: 2 operations')
+            self.get_logger().info('  ✅ HEAVE DOWN to -0.8m')
+            self.get_logger().info('  ✅ ROLL left/right')
+            self.get_logger().info('  ✅ SURFACE to -0.2m')
+            self.get_logger().info('  ✅ SURGE forward')
+            self.get_logger().info('  ✅ SURGE backward')
+            self.get_logger().info('  ✅ YAW left')
+            self.get_logger().info('  ✅ YAW right')
             self.get_logger().info('')
             self.get_logger().info(f'Final Position: X={self.current_position[0]:.2f}m, Y={self.current_position[1]:.2f}m')
             self.get_logger().info(f'Final Depth: {self.current_depth:.3f}m')
