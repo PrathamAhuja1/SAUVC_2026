@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Standalone Motion Demo Launch File
-Launches ONLY simulation + thruster control (NO detection/navigation)
+Complete Motion Demo Launch File
+- Starts Gazebo simulation
+- Launches motion demo with 2m forward movement first
+- Shows camera view
+- Clean logging (no thrust/wrench spam)
 
 Usage:
-    Terminal 1: ros2 launch auv_slam motion_demo_standalone.launch.py
-    Terminal 2: ros2 run auv_slam motion_demo.py
+    ros2 launch auv_slam demo.launch.py
 """
 
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess
+from launch.actions import ExecuteProcess, TimerAction
 from launch_ros.actions import Node
 from launch.substitutions import Command, FindExecutable
 import launch_ros.descriptions
@@ -98,13 +100,40 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # 6. Thruster Mapper (REQUIRED for motion)
+    # 6. Thruster Mapper (SILENT - no thrust logging)
     thruster_mapper = Node(
         package='auv_slam',
         executable='simple_thruster_mapper.py',
         name='thruster_mapper',
         output='screen',
         parameters=[thruster_params, {'use_sim_time': True}]
+    )
+    
+    # 7. Motion Demo Node
+    # Delayed start to let simulation initialize
+    motion_demo = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='auv_slam',
+                executable='demo.py',
+                name='motion_demo',
+                output='screen',
+                parameters=[{'use_sim_time': True}]
+            )
+        ]
+    )
+    
+    # 8. Camera View - rqt_image_view
+    camera_view = TimerAction(
+        period=8.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['rqt_image_view', '/camera_forward/image_raw'],
+                output='screen',
+                shell=False
+            )
+        ]
     )
 
     return LaunchDescription([
@@ -114,6 +143,8 @@ def generate_launch_description():
         spawn_entity,
         bridge,
         thruster_mapper,
+        motion_demo,
+        camera_view,
     ])
 
 
