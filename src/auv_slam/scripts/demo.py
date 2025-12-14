@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-AUV Motion Demonstration Script
-Sequence:
-1. Heave to -0.8m depth
-2. Roll left/right while at depth
-3. Surface to -0.2m
-4. Surge forward
-5. Surge backward
-6. Yaw left
-7. Yaw right
+Simple 3-Movement Demo - FIXED THRUSTER SIGNS
+1. Heave down 10s, then up 10s
+2. Surge forward 10s, then backward 10s  
+3. Yaw left 10s, then right 10s
+
+CRITICAL FIX: Vertical thrusters point DOWN
+- Positive Z command = thrusters push water down = AUV goes UP
+- Negative Z command = thrusters suck water up = AUV goes DOWN
 """
 
 import rclpy
@@ -17,341 +16,167 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import time
 import math
-from tf_transformations import euler_from_quaternion
 
 
-class MotionDemo(Node):
+class SimpleDemo(Node):
     def __init__(self):
-        super().__init__('motion_demo_node')
+        super().__init__('simple_demo')
         
-        # Publisher for velocity commands
+        # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
         
-        # Subscriber for odometry feedback
+        # Subscribers
         self.odom_sub = self.create_subscription(
             Odometry, '/ground_truth/odom', self.odom_callback, 10)
         
-        # Current state
-        self.current_position = None
+        # State
         self.current_depth = 0.0
-        self.current_roll = 0.0
-        self.current_pitch = 0.0
+        self.current_position = None
         self.current_yaw = 0.0
+        self.odom_received = False
         
-        # Demo parameters
-        self.motion_duration = 5.0  # seconds per motion
-        self.gap_duration = 3.0     # gap between motions
+        # Control timer (20 Hz like qualification)
+        self.control_timer = self.create_timer(0.05, self.control_loop)
         
-        # Depth control
-        self.depth_control_gain = 2.5
-        self.depth_deadband = 0.1
+        # Demo state
+        self.demo_active = False
+        self.current_movement = 0
+        self.movement_start_time = 0.0
+        
+        # MOVEMENTS - 10 seconds each, CORRECTED SIGNS
+        self.movements = [
+            # HEAVE: Negative Z = DOWN, Positive Z = UP
+            {'name': 'HEAVE DOWN', 'vx': 0.0, 'vz': -0.4, 'yaw': 0.0, 'duration': 10.0},
+            {'name': 'HEAVE UP', 'vx': 0.0, 'vz': 0.4, 'yaw': 0.0, 'duration': 10.0},
+            
+            # SURGE: Positive X = FORWARD, Negative X = BACKWARD
+            {'name': 'SURGE FORWARD', 'vx': 0.5, 'vz': 0.0, 'yaw': 0.0, 'duration': 10.0},
+            {'name': 'SURGE BACKWARD', 'vx': -0.5, 'vz': 0.0, 'yaw': 0.0, 'duration': 10.0},
+            
+            # YAW: Positive = CCW (LEFT), Negative = CW (RIGHT)
+            {'name': 'YAW LEFT', 'vx': 0.0, 'vz': 0.0, 'yaw': 0.4, 'duration': 10.0},
+            {'name': 'YAW RIGHT', 'vx': 0.0, 'vz': 0.0, 'yaw': -0.4, 'duration': 10.0},
+        ]
         
         self.get_logger().info('='*70)
-        self.get_logger().info('🚀 AUV MOTION DEMONSTRATION')
+        self.get_logger().info('🚀 Simple Demo Node Started')
+        self.get_logger().info('   Duration: 10 seconds per movement')
+        self.get_logger().info('   Total time: ~60 seconds')
+        self.get_logger().info('   Waiting for odometry...')
         self.get_logger().info('='*70)
-        self.get_logger().info('   Sequence:')
-        self.get_logger().info('   1. HEAVE DOWN to -0.8m')
-        self.get_logger().info('   2. ROLL (left/right) at depth')
-        self.get_logger().info('   3. SURFACE to -0.2m')
-        self.get_logger().info('   4. SURGE FORWARD')
-        self.get_logger().info('   5. SURGE BACKWARD')
-        self.get_logger().info('   6. YAW LEFT')
-        self.get_logger().info('   7. YAW RIGHT')
-        self.get_logger().info('='*70)
-        
-        # Wait for odometry
-        self.get_logger().info('⏳ Waiting for odometry...')
-        while self.current_position is None:
-            rclpy.spin_once(self, timeout_sec=0.1)
-        
-        self.get_logger().info('✅ Odometry ready!')
-        self.get_logger().info(f'   Starting depth: {self.current_depth:.3f}m')
-        self.get_logger().info('')
-        self.get_logger().info('Starting in 3 seconds...')
-        time.sleep(3)
     
     def odom_callback(self, msg: Odometry):
-        """Update current state from odometry"""
+        """Process odometry data"""
+        if not self.odom_received:
+            self.odom_received = True
+            self.get_logger().info('✅ Odometry received!')
+            self.get_logger().info(f'   Starting depth: Z={msg.pose.pose.position.z:.2f}m')
+            
+            # Start demo after 3 seconds
+            self.demo_start_timer = self.create_timer(3.0, self.start_demo)
+        
+        self.current_depth = msg.pose.pose.position.z
         self.current_position = (
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
             msg.pose.pose.position.z
         )
-        self.current_depth = msg.pose.pose.position.z
         
-        # Convert quaternion to euler angles
+        # Extract yaw from quaternion
         q = msg.pose.pose.orientation
-        self.current_roll, self.current_pitch, self.current_yaw = euler_from_quaternion(
-            [q.x, q.y, q.z, q.w]
-        )
+        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+        self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
     
-    def compute_depth_control(self, target_depth: float) -> float:
-        """Compute depth control command"""
-        depth_error = target_depth - self.current_depth
+    def start_demo(self):
+        """Start the demo sequence"""
+        self.demo_active = True
+        self.current_movement = 0
+        self.movement_start_time = time.time()
         
-        if abs(depth_error) < self.depth_deadband:
-            return 0.0
+        self.get_logger().info('='*70)
+        self.get_logger().info('🎬 DEMO STARTED')
+        self.get_logger().info('='*70)
+        self.get_logger().info(f"▶️  Movement 1/6: {self.movements[0]['name']}")
         
-        z_cmd = depth_error * self.depth_control_gain
-        return max(-1.0, min(z_cmd, 1.0))
+        # Cancel the start timer
+        self.demo_start_timer.cancel()
     
-    def publish_cmd(self, linear_x=0.0, linear_y=0.0, linear_z=0.0,
-                    angular_x=0.0, angular_y=0.0, angular_z=0.0):
-        """Publish velocity command"""
+    def control_loop(self):
+        """Main control loop - runs at 20 Hz"""
+        if not self.demo_active:
+            return
+        
+        # Get current movement
+        current = self.movements[self.current_movement]
+        
+        # Check if current movement is complete
+        elapsed = time.time() - self.movement_start_time
+        
+        if elapsed >= current['duration']:
+            # Movement complete, move to next
+            self.current_movement += 1
+            
+            if self.current_movement >= len(self.movements):
+                # All movements complete
+                self.demo_complete()
+                return
+            
+            # Start next movement
+            self.movement_start_time = time.time()
+            self.get_logger().info(
+                f"▶️  Movement {self.current_movement + 1}/6: "
+                f"{self.movements[self.current_movement]['name']}"
+            )
+        
+        # Execute current movement
         cmd = Twist()
-        cmd.linear.x = linear_x
-        cmd.linear.y = linear_y
-        cmd.linear.z = linear_z
-        cmd.angular.x = angular_x
-        cmd.angular.y = angular_y
-        cmd.angular.z = angular_z
+        cmd.linear.x = current['vx']
+        cmd.linear.y = 0.0
+        cmd.linear.z = current['vz']
+        cmd.angular.x = 0.0
+        cmd.angular.y = 0.0
+        cmd.angular.z = current['yaw']
         
         self.cmd_vel_pub.publish(cmd)
     
-    def stop(self):
-        """Stop all motion"""
-        self.publish_cmd(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    
-    def hold_depth(self, duration: float, target_depth: float):
-        """Hold at target depth for specified duration"""
-        start_time = time.time()
-        while (time.time() - start_time) < duration:
-            z_cmd = self.compute_depth_control(target_depth)
-            self.publish_cmd(0.0, 0.0, z_cmd)
-            rclpy.spin_once(self, timeout_sec=0.05)
-    
-    def log_start(self, name: str):
-        """Log operation start"""
-        self.get_logger().info('')
-        self.get_logger().info('╔' + '='*68 + '╗')
-        self.get_logger().info(f'║ ▶️  {name:<63} ║')
-        self.get_logger().info('╚' + '='*68 + '╝')
-    
-    def log_end(self, name: str):
-        """Log operation end"""
-        self.get_logger().info('╔' + '='*68 + '╗')
-        self.get_logger().info(f'║ ✅ COMPLETED: {name:<53} ║')
-        self.get_logger().info(f'║    Depth: {self.current_depth:.3f}m | Roll: {math.degrees(self.current_roll):+.1f}° | Yaw: {math.degrees(self.current_yaw):+.1f}°{" "*10}║')
-        self.get_logger().info('╚' + '='*68 + '╝')
-        self.get_logger().info('')
-    
-    def heave_to_depth(self, target_depth: float, operation_name: str):
-        """Heave to target depth"""
-        self.log_start(operation_name)
+    def demo_complete(self):
+        """Demo finished"""
+        self.demo_active = False
         
-        timeout = 20.0
-        start_time = time.time()
+        # Stop all motion
+        cmd = Twist()
+        self.cmd_vel_pub.publish(cmd)
         
-        while abs(self.current_depth - target_depth) > 0.15:
-            if (time.time() - start_time) > timeout:
-                self.get_logger().warn('⏰ Timeout reaching target depth')
-                break
+        if self.current_position:
+            final_depth = self.current_position[2]
+            final_x = self.current_position[0]
+            final_y = self.current_position[1]
             
-            z_cmd = self.compute_depth_control(target_depth)
-            self.publish_cmd(0.0, 0.0, z_cmd)
-            
-            # Progress update
-            elapsed = time.time() - start_time
-            if int(elapsed * 2) % 2 == 0:
-                self.get_logger().info(
-                    f'   Depth: {self.current_depth:.3f}m → Target: {target_depth:.3f}m',
-                    throttle_duration_sec=0.4
-                )
-            
-            rclpy.spin_once(self, timeout_sec=0.05)
-        
-        # Hold at depth for 2 seconds
-        self.hold_depth(2.0, target_depth)
-        
-        self.log_end(operation_name)
-        self.get_logger().info(f'⏸️  Holding depth for {self.gap_duration:.0f} seconds...')
-        self.hold_depth(self.gap_duration, target_depth)
-    
-    def execute_roll(self):
-        """Execute roll motion at depth"""
-        operation_name = "ROLL (Left/Right)"
-        self.log_start(operation_name)
-        
-        target_depth = -0.8
-        roll_speed = 0.4  # rad/s
-        duration = self.motion_duration
-        
-        # Roll RIGHT
-        self.get_logger().info('   Rolling RIGHT...')
-        roll_start = time.time()
-        while (time.time() - roll_start) < duration / 2:
-            z_cmd = self.compute_depth_control(target_depth)
-            self.publish_cmd(0.0, 0.0, z_cmd, roll_speed, 0.0, 0.0)
-            
-            elapsed = time.time() - roll_start
-            if int(elapsed * 2) % 2 == 0:
-                self.get_logger().info(
-                    f'   Depth: {self.current_depth:.3f}m | Roll: {math.degrees(self.current_roll):+.1f}°',
-                    throttle_duration_sec=0.4
-                )
-            
-            rclpy.spin_once(self, timeout_sec=0.05)
-        
-        # Stabilize
-        self.get_logger().info('   Stabilizing...')
-        self.hold_depth(1.0, target_depth)
-        
-        # Roll LEFT
-        self.get_logger().info('   Rolling LEFT...')
-        roll_start = time.time()
-        while (time.time() - roll_start) < duration / 2:
-            z_cmd = self.compute_depth_control(target_depth)
-            self.publish_cmd(0.0, 0.0, z_cmd, -roll_speed, 0.0, 0.0)
-            
-            elapsed = time.time() - roll_start
-            if int(elapsed * 2) % 2 == 0:
-                self.get_logger().info(
-                    f'   Depth: {self.current_depth:.3f}m | Roll: {math.degrees(self.current_roll):+.1f}°',
-                    throttle_duration_sec=0.4
-                )
-            
-            rclpy.spin_once(self, timeout_sec=0.05)
-        
-        # Stop
-        self.stop()
-        time.sleep(0.5)
-        
-        self.log_end(operation_name)
-        self.get_logger().info(f'⏸️  Holding depth for {self.gap_duration:.0f} seconds...')
-        self.hold_depth(self.gap_duration, target_depth)
-    
-    def execute_motion(self, operation_name: str, linear_x=0.0, linear_y=0.0,
-                      angular_z=0.0, maintain_depth=None, duration=None):
-        """Execute a motion with depth control"""
-        if duration is None:
-            duration = self.motion_duration
-        
-        self.log_start(operation_name)
-        
-        start_pos = self.current_position
-        start_time = time.time()
-        
-        while (time.time() - start_time) < duration:
-            if maintain_depth is not None:
-                z_cmd = self.compute_depth_control(maintain_depth)
-            else:
-                z_cmd = 0.0
-            
-            self.publish_cmd(linear_x, linear_y, z_cmd, 0.0, 0.0, angular_z)
-            
-            # Progress update
-            elapsed = time.time() - start_time
-            if int(elapsed * 2) % 2 == 0:
-                if maintain_depth is not None:
-                    self.get_logger().info(
-                        f'   Depth: {self.current_depth:.3f}m | Yaw: {math.degrees(self.current_yaw):+.1f}°',
-                        throttle_duration_sec=0.4
-                    )
-                else:
-                    dx = self.current_position[0] - start_pos[0]
-                    dy = self.current_position[1] - start_pos[1]
-                    self.get_logger().info(
-                        f'   Moved: ΔX={dx:+.3f}m, ΔY={dy:+.3f}m, Depth: {self.current_depth:.3f}m',
-                        throttle_duration_sec=0.4
-                    )
-            
-            rclpy.spin_once(self, timeout_sec=0.05)
-        
-        # Stop
-        self.stop()
-        time.sleep(0.5)
-        
-        self.log_end(operation_name)
-        
-        if maintain_depth is not None:
-            self.get_logger().info(f'⏸️  Holding depth for {self.gap_duration:.0f} seconds...')
-            self.hold_depth(self.gap_duration, maintain_depth)
-    
-    def run_demonstration(self):
-        """Run complete demonstration sequence"""
-        
-        try:
-            # 1. HEAVE DOWN to -0.8m
-            self.heave_to_depth(-0.8, "HEAVE DOWN to -0.8m")
-            
-            # 2. ROLL at depth
-            self.execute_roll()
-            
-            # 3. SURFACE to -0.2m
-            self.heave_to_depth(-0.2, "SURFACE to -0.2m")
-            
-            # 4. SURGE FORWARD
-            self.execute_motion(
-                "SURGE FORWARD",
-                linear_x=0.6,
-                maintain_depth=-0.2
-            )
-            
-            # 5. SURGE BACKWARD
-            self.execute_motion(
-                "SURGE BACKWARD",
-                linear_x=-0.6,
-                maintain_depth=-0.2
-            )
-            
-            # 6. YAW LEFT
-            self.execute_motion(
-                "YAW LEFT (Counter-Clockwise)",
-                angular_z=0.5,
-                maintain_depth=-0.2
-            )
-            
-            # 7. YAW RIGHT
-            self.execute_motion(
-                "YAW RIGHT (Clockwise)",
-                angular_z=-0.5,
-                maintain_depth=-0.2
-            )
-            
-            # MISSION COMPLETE
-            self.stop()
-            
-            self.get_logger().info('')
-            self.get_logger().info('╔' + '='*68 + '╗')
-            self.get_logger().info('║ 🎉 MISSION COMPLETE!                                            ║')
-            self.get_logger().info('╚' + '='*68 + '╝')
-            self.get_logger().info('')
-            self.get_logger().info('✅ All operations completed successfully!')
-            self.get_logger().info('')
-            self.get_logger().info('Summary:')
-            self.get_logger().info('  ✅ HEAVE DOWN to -0.8m')
-            self.get_logger().info('  ✅ ROLL left/right')
-            self.get_logger().info('  ✅ SURFACE to -0.2m')
-            self.get_logger().info('  ✅ SURGE forward')
-            self.get_logger().info('  ✅ SURGE backward')
-            self.get_logger().info('  ✅ YAW left')
-            self.get_logger().info('  ✅ YAW right')
-            self.get_logger().info('')
-            self.get_logger().info(f'Final Position: X={self.current_position[0]:.2f}m, Y={self.current_position[1]:.2f}m')
-            self.get_logger().info(f'Final Depth: {self.current_depth:.3f}m')
-            self.get_logger().info(f'Final Yaw: {math.degrees(self.current_yaw):.1f}°')
-            self.get_logger().info('')
-            
-        except KeyboardInterrupt:
-            self.get_logger().info('⚠️  Interrupted by user')
-            self.stop()
-        except Exception as e:
-            self.get_logger().error(f'❌ Error: {e}')
-            self.stop()
+            self.get_logger().info('='*70)
+            self.get_logger().info('✅ DEMO COMPLETE')
+            self.get_logger().info('='*70)
+            self.get_logger().info(f'   Final position:')
+            self.get_logger().info(f'     X = {final_x:.2f}m')
+            self.get_logger().info(f'     Y = {final_y:.2f}m')
+            self.get_logger().info(f'     Z = {final_depth:.2f}m')
+            self.get_logger().info(f'   Final yaw: {math.degrees(self.current_yaw):.1f}°')
+            self.get_logger().info('='*70)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    demo_node = MotionDemo()
+    node = SimpleDemo()
     
     try:
-        demo_node.run_demonstration()
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        demo_node.stop()
-        demo_node.destroy_node()
+        # Stop all motion
+        cmd = Twist()
+        node.cmd_vel_pub.publish(cmd)
+        node.destroy_node()
         rclpy.shutdown()
 
 

@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """
-Complete Motion Demo Launch File
-- Starts Gazebo simulation
-- Launches motion demo with proper sequence
-- Shows camera view
-- Works with existing thruster mapper and other nodes
-
-Usage:
-    ros2 launch auv_slam demo.launch.py
+Simple Demo Launch File - Based on qualification.launch.py
+Launches Gazebo + Simple 3-movement demo
 """
 
 import os
@@ -22,13 +16,13 @@ import launch_ros.descriptions
 def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
     
-    # Paths
+    # --- Paths ---
     urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
     bridge_config = os.path.join(auv_slam_share, 'config', 'ign_bridge.yaml')
     thruster_params = os.path.join(auv_slam_share, 'config', 'thruster_params.yaml')
     world_file = os.path.join(auv_slam_share, 'worlds', 'qualification_world.sdf')
     
-    # Gazebo environment
+    # Gazebo Environment Setup
     gz_models_path = os.path.join(auv_slam_share, "models")
     gz_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", default="")
     gz_env = {
@@ -42,7 +36,9 @@ def generate_launch_description():
                       ':'.join([gz_resource_path, gz_models_path])
     }
 
-    # 1. Robot State Publisher
+    # --- Simulation Nodes ---
+
+    # 1. Robot State Publisher (REQUIRED for spawning)
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -71,7 +67,7 @@ def generate_launch_description():
         shell=False
     )
 
-    # 4. Spawn Robot
+    # 4. Spawn Robot at STARTING LINE
     spawn_entity = Node(
         package="ros_gz_sim",
         executable="create",
@@ -100,7 +96,9 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # 6. Thruster Mapper (existing one from your system)
+    # --- Mission Nodes ---
+
+    # 6. Thruster Mapper
     thruster_mapper = Node(
         package='auv_slam',
         executable='simple_thruster_mapper.py',
@@ -109,28 +107,16 @@ def generate_launch_description():
         parameters=[thruster_params, {'use_sim_time': True}]
     )
     
-    # 7. Motion Demo Node (delayed start to let simulation initialize)
-    motion_demo = TimerAction(
-        period=5.0,
+    # 7. Simple Demo (delayed start)
+    demo_node = TimerAction(
+        period=2.0,
         actions=[
             Node(
                 package='auv_slam',
                 executable='demo.py',
-                name='motion_demo',
+                name='simple_demo',
                 output='screen',
                 parameters=[{'use_sim_time': True}]
-            )
-        ]
-    )
-    
-    # 8. Camera View (optional, delayed)
-    camera_view = TimerAction(
-        period=8.0,
-        actions=[
-            ExecuteProcess(
-                cmd=['rqt_image_view', '/camera_forward/image_raw'],
-                output='screen',
-                shell=False
             )
         ]
     )
@@ -142,8 +128,7 @@ def generate_launch_description():
         spawn_entity,
         bridge,
         thruster_mapper,
-        motion_demo,
-        camera_view,
+        demo_node,
     ])
 
 
