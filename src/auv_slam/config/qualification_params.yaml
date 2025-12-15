@@ -1,6 +1,6 @@
 qualification_detector_node:
   ros__parameters:
-    # Color
+    # Color detection
     orange_lower: [0, 20, 40]
     orange_upper: [35, 255, 255]
     min_area: 300
@@ -8,16 +8,20 @@ qualification_detector_node:
 
 qualification_navigator_node:
   ros__parameters:
+    # Mission parameters
     mission_depth: -0.8
     
-    # Distance to switch to Blind Heading Lock
-    # 1.8m: Close enough to be accurate, far enough to still see gate
+    # Passing trigger distance
+    # Lock heading when closer than this (meters)
     passing_trigger_dist: 1.8
     
     # Speeds
     search_speed: 0.4
     passing_speed: 0.8  # Fast speed for stability during lock
     
-    # Anti-Surfacing U-Turn
-    uturn_speed: 0.12        
-    uturn_depth_bias: -0.4
+    # FIXED U-Turn Parameters
+    # Increased speed for proper U-turn with forward motion
+    uturn_speed: 0.5  # CHANGED from 0.12 to 0.5
+    
+    # Anti-Surfacing depth bias during U-turn
+    uturn_depth_bias: -0.4  # Keeps depth stable during turn

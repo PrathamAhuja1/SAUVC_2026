@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-QUALIFICATION NAVIGATOR - HEADING LOCK EDITION
+QUALIFICATION NAVIGATOR - FIXED U-TURN AND PROPER GATE ALIGNMENT
 Strategy:
 1. Align visually at 2.5m
 2. Lock Compass Heading
 3. Drive Blindly through gate
-4. Unlock after clearance -> U-turn
+4. Proper U-turn with forward motion
+5. Reverse approach with center alignment
 """
 
 import rclpy
@@ -25,12 +26,13 @@ class QualificationNavigator(Node):
         self.SEARCHING = 1
         self.APPROACHING = 2
         self.ALIGNING = 3
-        self.PASSING_HEADING_LOCK = 5  # NEW: Blind drive with compass lock
+        self.PASSING_HEADING_LOCK = 5
         self.CLEARING = 6
         self.UTURN = 7
         self.POST_UTURN_ALIGN = 8
         self.REVERSE_APPROACHING = 10
-        self.REVERSE_PASSING_LOCK = 13 # NEW: Reverse blind drive
+        self.REVERSE_ALIGNING = 12
+        self.REVERSE_PASSING_LOCK = 13
         self.REVERSE_CLEARING = 14
         self.COMPLETED = 15
         
@@ -46,30 +48,36 @@ class QualificationNavigator(Node):
         
         # Params
         self.declare_parameter('mission_depth', -0.8)
-        self.declare_parameter('passing_trigger_dist', 1.8) # Lock heading when closer than this
+        self.declare_parameter('passing_trigger_dist', 1.8)
         self.declare_parameter('passing_speed', 0.8)
-        self.declare_parameter('uturn_speed', 0.12)
+        self.declare_parameter('uturn_speed', 0.5)  # INCREASED for proper U-turn
+        self.declare_parameter('uturn_depth_bias', -0.4)
         
         self.mission_depth = self.get_parameter('mission_depth').value
         self.trigger_dist = self.get_parameter('passing_trigger_dist').value
         self.passing_speed = self.get_parameter('passing_speed').value
         self.uturn_speed = self.get_parameter('uturn_speed').value
+        self.uturn_depth_bias = self.get_parameter('uturn_depth_bias').value
         
         # Variables
         self.gate_detected = False
         self.alignment_error = 0.0
         self.estimated_distance = 999.0
+        self.frame_position = 0.0
         self.current_position = None
         self.current_yaw = 0.0
+        self.current_depth = 0.0
         self.locked_yaw = 0.0 
         self.reverse_mode = False
         self.uturn_start_time = 0.0
         self.uturn_start_yaw = 0.0
+        self.state_start_time = time.time()
         
         # Subscriptions
         self.create_subscription(Bool, '/qualification/gate_detected', self.gate_cb, 10)
         self.create_subscription(Float32, '/qualification/alignment_error', self.align_cb, 10)
         self.create_subscription(Float32, '/qualification/estimated_distance', self.dist_cb, 10)
+        self.create_subscription(Float32, '/qualification/frame_position', self.frame_pos_cb, 10)
         self.create_subscription(Odometry, '/ground_truth/odom', self.odom_cb, 10)
         
         # Publishers
@@ -78,11 +86,19 @@ class QualificationNavigator(Node):
         self.reverse_mode_pub = self.create_publisher(Bool, '/mission/reverse_mode', 10)
         
         self.create_timer(0.05, self.control_loop)
-        self.get_logger().info('✅ NAVIGATOR: HEADING LOCK ENABLED')
+        self.get_logger().info('🚀 Qualification Navigator Started')
         
-    def gate_cb(self, msg): self.gate_detected = msg.data
-    def align_cb(self, msg): self.alignment_error = msg.data
-    def dist_cb(self, msg): self.estimated_distance = msg.data
+    def gate_cb(self, msg): 
+        self.gate_detected = msg.data
+    
+    def align_cb(self, msg): 
+        self.alignment_error = msg.data
+    
+    def dist_cb(self, msg): 
+        self.estimated_distance = msg.data
+    
+    def frame_pos_cb(self, msg):
+        self.frame_position = msg.data
     
     def odom_cb(self, msg):
         self.current_depth = msg.pose.pose.position.z
@@ -111,7 +127,6 @@ class QualificationNavigator(Node):
             cmd.angular.z = 0.2 * (1 if (time.time() % 6 < 3) else -1)
 
         elif self.state == self.APPROACHING:
-            # Slow down and align early
             if self.estimated_distance < 3.0:
                 self.transition_to(self.ALIGNING)
             cmd.linear.x = 0.5
@@ -119,27 +134,24 @@ class QualificationNavigator(Node):
 
         elif self.state == self.ALIGNING:
             # If close enough and aligned, LOCK HEADING and PASS
-            if self.estimated_distance < self.trigger_dist and abs(self.alignment_error) < 0.1:
-                self.locked_yaw = self.current_yaw # <--- LOCK HEADING HERE
-                self.get_logger().info(f'🔒 HEADING LOCKED at {math.degrees(self.locked_yaw):.1f} deg. DRIVING BLIND.')
+            if self.estimated_distance < self.trigger_dist and abs(self.frame_position) < 0.15:
+                self.locked_yaw = self.current_yaw
                 self.transition_to(self.PASSING_HEADING_LOCK)
                 return
             
-            # Normal visual alignment
+            # Visual alignment
             cmd.linear.x = 0.15
-            cmd.angular.z = -self.alignment_error * 2.5
+            cmd.angular.z = -self.frame_position * 2.5
 
         elif self.state == self.PASSING_HEADING_LOCK:
-            # BLIND DRIVE using Compass
             # Check if we passed the clearance line
             if self.current_position[0] > self.forward_clearance_x:
-                self.get_logger().info("✅ CLEARED (Forward). Starting U-Turn.")
                 self.transition_to(self.UTURN)
                 return
 
             # Maintain Locked Heading
             yaw_error = self.normalize_angle(self.locked_yaw - self.current_yaw)
-            cmd.angular.z = yaw_error * 2.0 # Strong correction to hold course
+            cmd.angular.z = yaw_error * 2.0
             cmd.linear.x = self.passing_speed
 
         elif self.state == self.UTURN:
@@ -153,18 +165,25 @@ class QualificationNavigator(Node):
             cmd.angular.z = 0.3
 
         elif self.state == self.REVERSE_APPROACHING:
-             if self.estimated_distance < self.trigger_dist and abs(self.alignment_error) < 0.1:
-                self.locked_yaw = self.current_yaw # <--- LOCK HEADING REVERSE
-                self.get_logger().info(f'🔒 REVERSE HEADING LOCKED. DRIVING BLIND.')
+            if self.estimated_distance < 3.0:
+                self.transition_to(self.REVERSE_ALIGNING)
+            cmd.linear.x = 0.4
+            cmd.angular.z = -self.frame_position * 1.5
+
+        elif self.state == self.REVERSE_ALIGNING:
+            # Align properly before locking heading
+            if self.estimated_distance < self.trigger_dist and abs(self.frame_position) < 0.15:
+                self.locked_yaw = self.current_yaw
                 self.transition_to(self.REVERSE_PASSING_LOCK)
                 return
-             cmd.linear.x = 0.4
-             cmd.angular.z = -self.alignment_error * 1.5
+            
+            # Strong alignment correction
+            cmd.linear.x = 0.15
+            cmd.angular.z = -self.frame_position * 2.5
 
         elif self.state == self.REVERSE_PASSING_LOCK:
             # Check reverse clearance
             if self.current_position[0] < self.reverse_clearance_x:
-                self.get_logger().info("🏆 MISSION COMPLETE")
                 self.transition_to(self.COMPLETED)
                 return
 
@@ -178,26 +197,29 @@ class QualificationNavigator(Node):
             cmd.angular.z = 0.0
 
         self.cmd_vel_pub.publish(cmd)
-        self.state_pub.publish(String(data=str(self.state)))
+        self.state_pub.publish(String(data=self.get_state_name()))
 
     def perform_uturn(self, cmd):
-        # Anti-Surfacing U-Turn
+        """FIXED: Proper U-turn with forward motion"""
         if self.uturn_start_time == 0:
             self.uturn_start_time = time.time()
             self.uturn_start_yaw = self.current_yaw
             
         angle_turned = abs(self.normalize_angle(self.current_yaw - self.uturn_start_yaw))
+        
         if angle_turned > (math.pi - 0.2):
             self.transition_to(self.POST_UTURN_ALIGN)
             self.uturn_start_time = 0
             return cmd
-            
-        cmd.linear.x = self.uturn_speed
-        cmd.angular.z = 0.3
         
-        # Bias depth down to prevent surfacing
-        err = -0.8 - self.current_depth
-        cmd.linear.z = (err * 2.0) - 0.4 
+        # FIXED: Move forward while turning for proper U-turn
+        cmd.linear.x = self.uturn_speed  # Now 0.5 m/s
+        cmd.angular.z = 0.4  # Increased turn rate
+        
+        # Maintain depth during U-turn
+        err = self.mission_depth - self.current_depth
+        cmd.linear.z = (err * 2.0) + self.uturn_depth_bias
+        
         return cmd
 
     def depth_control(self, target):
@@ -210,13 +232,51 @@ class QualificationNavigator(Node):
         return angle
 
     def transition_to(self, new_state):
+        """State transition with logging only at start and end"""
+        old_state = self.get_state_name()
+        elapsed = time.time() - self.state_start_time
+        
+        # Log state completion
+        self.get_logger().info(f'✓ {old_state} completed ({elapsed:.1f}s)')
+        
+        # Update state
         self.state = new_state
-        self.get_logger().info(f'State Change: {self.state}')
+        self.state_start_time = time.time()
+        
+        # Log new state start
+        new_state_name = self.get_state_name()
+        self.get_logger().info(f'→ {new_state_name} started')
+
+    def get_state_name(self):
+        names = {
+            self.SUBMERGING: 'SUBMERGING',
+            self.SEARCHING: 'SEARCHING',
+            self.APPROACHING: 'APPROACHING',
+            self.ALIGNING: 'ALIGNING',
+            self.PASSING_HEADING_LOCK: 'PASSING',
+            self.CLEARING: 'CLEARING',
+            self.UTURN: 'U-TURN',
+            self.POST_UTURN_ALIGN: 'POST_UTURN_ALIGN',
+            self.REVERSE_APPROACHING: 'REVERSE_APPROACHING',
+            self.REVERSE_ALIGNING: 'REVERSE_ALIGNING',
+            self.REVERSE_PASSING_LOCK: 'REVERSE_PASSING',
+            self.REVERSE_CLEARING: 'REVERSE_CLEARING',
+            self.COMPLETED: 'COMPLETED'
+        }
+        return names.get(self.state, 'UNKNOWN')
+
 
 def main(args=None):
     rclpy.init(args=args)
-    rclpy.spin(QualificationNavigator())
-    rclpy.shutdown()
+    node = QualificationNavigator()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.get_logger().info('Navigator shutdown')
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
