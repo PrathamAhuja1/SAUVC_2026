@@ -141,7 +141,7 @@ class ThrusterValidationDemo(Node):
         self.movement_start_yaw = self.current_yaw
         
         move = self.movements[0]
-        self.get_logger().info(f"Starting {move['name']}")
+        self.get_logger().info(f"=====Starting {move['name']}=====")
     
     def control_loop(self):
         """Main control loop at 20 Hz"""
