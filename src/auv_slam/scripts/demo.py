@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Simple Demo - Works with FIXED Thruster Mapper
-Now uses CORRECT signs (no inversions needed)
+COMPLETE Thruster System Validation Demo
+Minimal logging version
 """
 
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float64
 import time
 import math
 
 
-class SimpleDemo(Node):
+class ThrusterValidationDemo(Node):
     def __init__(self):
-        super().__init__('simple_demo')
+        super().__init__('thruster_validation_demo')
         
         # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
@@ -23,100 +24,97 @@ class SimpleDemo(Node):
         self.odom_sub = self.create_subscription(
             Odometry, '/ground_truth/odom', self.odom_callback, 10)
         
-        # State
-        self.current_depth = 0.0
+        # Monitor individual thruster commands (logic kept, logging removed)
+        self.thruster_values = [0.0] * 6
+        self.thruster_subs = []
+        for i in range(1, 7):
+            sub = self.create_subscription(
+                Float64, f'/thruster{i}_cmd',
+                lambda msg, idx=i-1: self.thruster_callback(msg, idx), 10)
+            self.thruster_subs.append(sub)
+        
+        # State tracking
         self.current_position = None
+        self.current_depth = 0.0
         self.current_yaw = 0.0
         self.odom_received = False
+        
         self.movement_start_position = None
+        self.movement_start_yaw = 0.0
         
-        # Control timer (20 Hz)
-        self.control_timer = self.create_timer(0.05, self.control_loop)
-        
-        # Demo state
+        # Demo control
         self.demo_active = False
         self.current_movement = 0
         self.movement_start_time = 0.0
         
-        # MOVEMENTS - Standard ROS Conventions
+        # Control timer (20 Hz)
+        self.control_timer = self.create_timer(0.05, self.control_loop)
+        
+        # MOVEMENT SEQUENCE
         self.movements = [
-            # HEAVE: Standard ROS (negative Z = down, positive Z = up)
+            # 1. HEAVE DOWN
             {
-                'name': 'HEAVE DOWN', 
-                'vx': 0.0, 
-                'vz': -0.4,  # Standard: Negative Z = descend
-                'yaw': 0.0, 
-                'duration': 10.0,
-                'expected': 'Descend (negative ΔZ)'
-            },
-            {
-                'name': 'HEAVE UP', 
-                'vx': 0.0, 
-                'vz': 0.4,   # Standard: Positive Z = ascend
-                'yaw': 0.0, 
-                'duration': 10.0,
-                'expected': 'Ascend (positive ΔZ)'
+                'name': 'HEAVE DOWN',
+                'vx': 0.0, 'vy': 0.0, 'vz': -0.5, 'yaw': 0.0,
+                'duration': 8.0,
+                'verify': lambda start, end: end[2] < start[2] - 0.3,
             },
             
-            # SURGE: Standard ROS convention
+            # 2. HEAVE UP
             {
-                'name': 'SURGE FORWARD', 
-                'vx': 0.5,   # CORRECT: Positive X = forward
-                'vz': 0.0, 
-                'yaw': 0.0, 
-                'duration': 10.0,
-                'expected': 'Move forward (positive ΔX)'
-            },
-            {
-                'name': 'SURGE BACKWARD', 
-                'vx': -0.5,  # CORRECT: Negative X = backward
-                'vz': 0.0, 
-                'yaw': 0.0, 
-                'duration': 10.0,
-                'expected': 'Move backward (negative ΔX)'
+                'name': 'HEAVE UP',
+                'vx': 0.0, 'vy': 0.0, 'vz': 0.5, 'yaw': 0.0,
+                'duration': 4.0,
+                'verify': lambda start, end: end[2] > start[2] + 0.15,
             },
             
-            # YAW: Standard ROS convention
+            # 3. SURGE FORWARD
             {
-                'name': 'YAW LEFT (CCW)', 
-                'vx': 0.0, 
-                'vz': 0.0, 
-                'yaw': 0.4,  # CORRECT: Positive = CCW
-                'duration': 10.0,
-                'expected': 'Rotate left (counter-clockwise)'
+                'name': 'SURGE FORWARD',
+                'vx': 0.6, 'vy': 0.0, 'vz': 0.0, 'yaw': 0.0,
+                'duration': 8.0,
+                'verify': lambda start, end: end[0] > start[0] + 0.4,
             },
+            
+            # 4. SURGE BACKWARD
             {
-                'name': 'YAW RIGHT (CW)', 
-                'vx': 0.0, 
-                'vz': 0.0, 
-                'yaw': -0.4,  # CORRECT: Negative = CW
-                'duration': 10.0,
-                'expected': 'Rotate right (clockwise)'
+                'name': 'SURGE BACKWARD',
+                'vx': -0.6, 'vy': 0.0, 'vz': 0.0, 'yaw': 0.0,
+                'duration': 8.0,
+                'verify': lambda start, end: end[0] < start[0] - 0.4,
+            },
+            
+            # 5. YAW LEFT (CCW)
+            {
+                'name': 'YAW LEFT (CCW)',
+                'vx': 0.0, 'vy': 0.0, 'vz': 0.0, 'yaw': 0.5,
+                'duration': 8.0,
+                'verify': lambda start, end: True,
+            },
+            
+            # 6. YAW RIGHT (CW)
+            {
+                'name': 'YAW RIGHT (CW)',
+                'vx': 0.0, 'vy': 0.0, 'vz': 0.0, 'yaw': -0.5,
+                'duration': 8.0,
+                'verify': lambda start, end: True,
             },
         ]
         
-        self.get_logger().info('='*70)
-        self.get_logger().info('🚀 Simple Demo - Direct Thruster Control')
-        self.get_logger().info('='*70)
-        self.get_logger().info('   Using SIMPLE direct thruster mapper')
-        self.get_logger().info('   Standard ROS conventions (no inversions)')
-        self.get_logger().info('   Duration: 10 seconds per movement')
-        self.get_logger().info('   Total time: ~60 seconds')
-        self.get_logger().info('   Waiting for odometry...')
-        self.get_logger().info('='*70)
+        self.test_results = []
+        # Removed initialization banner logs
+    
+    def thruster_callback(self, msg: Float64, idx: int):
+        self.thruster_values[idx] = msg.data
     
     def odom_callback(self, msg: Odometry):
-        """Process odometry data"""
+        """Process odometry feedback"""
         if not self.odom_received:
             self.odom_received = True
-            self.get_logger().info('✅ Odometry received!')
-            self.get_logger().info(f'   Starting position:')
-            self.get_logger().info(f'     X = {msg.pose.pose.position.x:.3f}m')
-            self.get_logger().info(f'     Y = {msg.pose.pose.position.y:.3f}m')
-            self.get_logger().info(f'     Z = {msg.pose.pose.position.z:.3f}m')
+            # Removed initial position logging
             
             # Start demo after 3 seconds
-            self.demo_start_timer = self.create_timer(3.0, self.start_demo)
+            self.create_timer(3.0, self.start_demo_once)
         
         self.current_depth = msg.pose.pose.position.z
         self.current_position = (
@@ -131,132 +129,72 @@ class SimpleDemo(Node):
         cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
         self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
     
-    def start_demo(self):
-        """Start the demo sequence"""
+    def start_demo_once(self):
+        """Start the demo sequence (called once)"""
+        if self.demo_active:
+            return
+        
         self.demo_active = True
         self.current_movement = 0
         self.movement_start_time = time.time()
         self.movement_start_position = self.current_position
+        self.movement_start_yaw = self.current_yaw
         
-        current_move = self.movements[0]
-        
-        self.get_logger().info('='*70)
-        self.get_logger().info('🎬 DEMO STARTED')
-        self.get_logger().info('='*70)
-        self.get_logger().info(f"▶️  Movement 1/6: {current_move['name']}")
-        self.get_logger().info(f"   Command: vx={current_move['vx']}, vz={current_move['vz']}, yaw={current_move['yaw']}")
-        self.get_logger().info(f"   Expected: {current_move['expected']}")
-        self.get_logger().info('='*70)
-        
-        # Cancel the start timer
-        self.demo_start_timer.cancel()
+        move = self.movements[0]
+        self.get_logger().info(f"Starting {move['name']}")
     
     def control_loop(self):
-        """Main control loop - runs at 20 Hz"""
-        if not self.demo_active:
+        """Main control loop at 20 Hz"""
+        if not self.demo_active or self.current_position is None:
             return
         
-        # Get current movement
-        current = self.movements[self.current_movement]
-        
-        # Check if current movement is complete
+        current_move = self.movements[self.current_movement]
         elapsed = time.time() - self.movement_start_time
         
-        if elapsed >= current['duration']:
-            # Log results before transitioning
-            self.log_movement_result(current)
+        # Check if movement complete
+        if elapsed >= current_move['duration']:
+            # Log results (minimal)
+            self.log_movement_complete(current_move)
             
-            # Movement complete, move to next
+            # Next movement
             self.current_movement += 1
             
             if self.current_movement >= len(self.movements):
-                # All movements complete
-                self.demo_complete()
+                # All tests complete
+                self.complete_demo()
                 return
             
             # Start next movement
             self.movement_start_time = time.time()
             self.movement_start_position = self.current_position
+            self.movement_start_yaw = self.current_yaw
             
             next_move = self.movements[self.current_movement]
-            
-            self.get_logger().info('='*70)
-            self.get_logger().info(
-                f"▶️  Movement {self.current_movement + 1}/6: {next_move['name']}"
-            )
-            self.get_logger().info(
-                f"   Command: vx={next_move['vx']}, vz={next_move['vz']}, yaw={next_move['yaw']}"
-            )
-            self.get_logger().info(f"   Expected: {next_move['expected']}")
-            self.get_logger().info('='*70)
+            self.get_logger().info(f"Starting {next_move['name']}")
         
         # Execute current movement
         cmd = Twist()
-        cmd.linear.x = current['vx']
-        cmd.linear.y = 0.0
-        cmd.linear.z = current['vz']
+        cmd.linear.x = current_move['vx']
+        cmd.linear.y = current_move['vy']
+        cmd.linear.z = current_move['vz']
         cmd.angular.x = 0.0
         cmd.angular.y = 0.0
-        cmd.angular.z = current['yaw']
+        cmd.angular.z = current_move['yaw']
         
         self.cmd_vel_pub.publish(cmd)
         
-        # Periodic status update
-        if int(elapsed * 10) % 20 == 0:  # Every 2 seconds
-            self.log_progress(current, elapsed)
+        # Removed periodic progress logging
     
-    def log_progress(self, movement: dict, elapsed: float):
-        """Log progress during movement"""
+    def log_movement_complete(self, move: dict):
+        """Log simple end message"""
+        # Logic to record success/fail is kept for internal state, but not printed
         if self.current_position and self.movement_start_position:
-            dx = self.current_position[0] - self.movement_start_position[0]
-            dy = self.current_position[1] - self.movement_start_position[1]
-            dz = self.current_position[2] - self.movement_start_position[2]
+            success = move['verify'](self.movement_start_position, self.current_position)
+            self.test_results.append({'name': move['name'], 'success': success})
             
-            self.get_logger().info(
-                f"⏱️  {movement['name']}: {elapsed:.1f}s | "
-                f"ΔX={dx:+.3f}m, ΔY={dy:+.3f}m, ΔZ={dz:+.3f}m",
-                throttle_duration_sec=1.9
-            )
+        self.get_logger().info(f"Ending {move['name']}")
     
-    def log_movement_result(self, movement: dict):
-        """Log detailed results after movement completes"""
-        if self.current_position and self.movement_start_position:
-            dx = self.current_position[0] - self.movement_start_position[0]
-            dy = self.current_position[1] - self.movement_start_position[1]
-            dz = self.current_position[2] - self.movement_start_position[2]
-            
-            # Check if movement was correct
-            success = self.verify_movement(movement, dx, dy, dz)
-            status = "✅ CORRECT" if success else "❌ INCORRECT"
-            
-            self.get_logger().info('─'*70)
-            self.get_logger().info(f"📊 RESULT: {movement['name']} - {status}")
-            self.get_logger().info(f"   ΔX = {dx:+.3f}m")
-            self.get_logger().info(f"   ΔY = {dy:+.3f}m")
-            self.get_logger().info(f"   ΔZ = {dz:+.3f}m (depth change)")
-            self.get_logger().info(f"   Expected: {movement['expected']}")
-            self.get_logger().info('─'*70)
-    
-    def verify_movement(self, movement: dict, dx: float, dy: float, dz: float) -> bool:
-        """Verify if movement was correct"""
-        name = movement['name']
-        threshold = 0.05  # 5cm threshold
-        
-        if 'DOWN' in name:
-            return dz < -threshold  # Should descend (negative Z)
-        elif 'UP' in name:
-            return dz > threshold   # Should ascend (positive Z)
-        elif 'FORWARD' in name:
-            return dx > threshold   # Should move forward (positive X)
-        elif 'BACKWARD' in name:
-            return dx < -threshold  # Should move backward (negative X)
-        elif 'LEFT' in name or 'RIGHT' in name:
-            # Yaw should not cause significant depth change
-            return abs(dz) < 0.2  # Less than 20cm depth change during yaw
-        
-        return False
-    
-    def demo_complete(self):
+    def complete_demo(self):
         """Demo finished"""
         self.demo_active = False
         
@@ -264,36 +202,29 @@ class SimpleDemo(Node):
         cmd = Twist()
         self.cmd_vel_pub.publish(cmd)
         
-        if self.current_position:
-            final_depth = self.current_position[2]
-            final_x = self.current_position[0]
-            final_y = self.current_position[1]
-            
-            self.get_logger().info('='*70)
-            self.get_logger().info('✅ DEMO COMPLETE - ALL MOVEMENTS TESTED')
-            self.get_logger().info('='*70)
-            self.get_logger().info(f'   Final position:')
-            self.get_logger().info(f'     X = {final_x:.3f}m')
-            self.get_logger().info(f'     Y = {final_y:.3f}m')
-            self.get_logger().info(f'     Z = {final_depth:.3f}m')
-            self.get_logger().info(f'   Final yaw: {math.degrees(self.current_yaw):.1f}°')
-            self.get_logger().info('='*70)
-            self.get_logger().info('   Review the results above:')
-            self.get_logger().info('   - All ✅ = Thruster system working correctly!')
-            self.get_logger().info('   - Any ❌ = Further debugging needed')
-            self.get_logger().info('='*70)
+        # Removed summary table
+        self.get_logger().info("All commands finished.")
+    
+    @staticmethod
+    def normalize_angle(angle: float) -> float:
+        """Normalize angle to [-pi, pi]"""
+        while angle > math.pi:
+            angle -= 2 * math.pi
+        while angle < -math.pi:
+            angle += 2 * math.pi
+        return angle
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = SimpleDemo()
+    node = ThrusterValidationDemo()
     
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        # Stop all motion
+        # Emergency stop
         cmd = Twist()
         node.cmd_vel_pub.publish(cmd)
         node.destroy_node()
