@@ -1,161 +1,125 @@
 #!/usr/bin/env python3
 """
-FIXED Thruster Mapper - Corrected depth control sign
-Key fix: Removed Z-axis negation that was causing inverted depth control
+SIMPLE Direct Thruster Mapper
+Direct control without complex matrix math - just map commands to thrusters
 """
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Wrench, Twist
+from geometry_msgs.msg import Twist
 from std_msgs.msg import Float64
-import numpy as np
+import math
 
 
-class EnhancedThrusterMapper(Node):
+class SimpleThrusterMapper(Node):
     def __init__(self):
-        super().__init__('enhanced_thruster_mapper')
+        super().__init__('simple_thruster_mapper')
         
         self.declare_parameter('max_thrust', 10.0)
-        self.declare_parameter('dead_zone', 0.1)
-        self.declare_parameter('use_twist_input', True)
-        
         self.max_thrust = self.get_parameter('max_thrust').value
-        self.dead_zone = self.get_parameter('dead_zone').value
-        self.use_twist = self.get_parameter('use_twist_input').value
         
-        # Thruster Allocation Matrix
-        self.TAM = np.array([
-            [-1.0,  -1.0,   0.0,   0.0,   0.0,  -1.0],  # T1 (FL)
-            [-1.0,   1.0,   0.0,   0.0,   0.0,   1.0],  # T2 (FR)
-            [ 1.0,  -1.0,   0.0,   0.0,   0.0,   1.0],  # T3 (BL)
-            [ 1.0,   1.0,   0.0,   0.0,   0.0,  -1.0],  # T4 (BR)
-            [ 0.0,   0.0,   1.0,   0.0,   0.2,   0.0],  # T5 (D1) - CORRECT: +1.0
-            [ 0.0,   0.0,   1.0,   0.0,  -0.2,   0.0],  # T6 (D2) - CORRECT: +1.0
-        ], dtype=np.float64)
+        # Subscriptions
+        self.twist_sub = self.create_subscription(
+            Twist, '/rp2040/cmd_vel', self.twist_callback, 10)
         
-        self.TAM_pinv = np.linalg.pinv(self.TAM)
-        
-        if self.use_twist:
-            self.twist_sub = self.create_subscription(
-                Twist, '/rp2040/cmd_vel', self.twist_callback, 10)
-        else:
-            self.wrench_sub = self.create_subscription(
-                Wrench, '/cmd_wrench', self.wrench_callback, 10)
-        
+        # Publishers for each thruster
         self.thruster_pubs = []
         for i in range(1, 7):
             pub = self.create_publisher(Float64, f'/thruster{i}_cmd', 10)
             self.thruster_pubs.append(pub)
         
+        self.last_cmd = None
         self.diag_timer = self.create_timer(1.0, self.publish_diagnostics)
-        self.last_wrench = np.zeros(6)
-        self.last_thrusts = np.zeros(6)
         
-        self.get_logger().info('✅ FIXED Thruster Mapper initialized')
-        self.get_logger().info('   - Correct depth control (no Z negation)')
-        self.get_logger().info(f'   - Max thrust: {self.max_thrust} N')
-        self.get_logger().info(f'   - Input mode: {"Twist" if self.use_twist else "Wrench"}')
+        self.get_logger().info('='*70)
+        self.get_logger().info('✅ SIMPLE Direct Thruster Mapper')
+        self.get_logger().info('='*70)
+        self.get_logger().info('   Direct command mapping (no matrix math)')
+        self.get_logger().info(f'   Max thrust: {self.max_thrust} N')
+        self.get_logger().info('='*70)
     
     def twist_callback(self, msg: Twist):
         """
-        CRITICAL FIX: Removed Z negation
+        Direct mapping of Twist commands to thrusters
         
-        ROS/Gazebo convention:
-        - +X = forward, -X = backward
-        - +Y = left, -Y = right
-        - +Z = up, -Z = down
+        BlueROV2 Configuration:
+              FRONT
+           T1      T2
+             \  /
+              \/
+              /\
+             /  \
+           T3      T4
+              BACK
         
-        Vertical thrusters point DOWN, so:
-        - Positive thrust = push DOWN (descend)
-        - Negative thrust = push UP (ascend)
+        T5 (front vertical), T6 (back vertical) - point DOWN
         
-        Depth control logic:
-        - If too shallow (current > target), need to descend → cmd.linear.z < 0
-        - Negative cmd.linear.z → negative wrench[2] → negative thrust → ascend
-        
-        Wait, that's still wrong! Let me reconsider...
-        
-        Actually, the thruster physical setup:
-        - Thrusters point DOWN
-        - Spinning them forward pushes water DOWN, creating UP force on AUV
-        - So positive thrust = AUV goes UP
-        - Negative thrust = AUV goes DOWN
-        
-        Therefore:
-        - To descend: need negative thrust → negative wrench → negative cmd.linear.z
-        - To ascend: need positive thrust → positive wrench → positive cmd.linear.z
-        
-        Current code in navigator:
-        depth_error = target_depth - current_depth
-        cmd.linear.z = depth_error * gain
-        
-        If current = -1m, target = -2m:
-        error = -2 - (-1) = -1
-        cmd.linear.z = -1 * gain = negative → descend ✓
-        
-        This is CORRECT! No negation needed.
+        Physics:
+        - Positive thrust on vertical = push water DOWN = AUV goes UP
+        - Negative thrust on vertical = pull water UP = AUV goes DOWN
         """
-        wrench = np.array([
-            msg.linear.x,
-            msg.linear.y,
-            msg.linear.z,  # ✓ FIXED: No negation
-            0.0,
-            0.0,
-            msg.angular.z,
-        ])
+        self.last_cmd = msg
         
-        self.allocate_and_publish(wrench)
-    
-    def wrench_callback(self, msg: Wrench):
-        wrench = np.array([
-            msg.force.x,
-            msg.force.y,
-            msg.force.z,
-            msg.torque.x,
-            msg.torque.y,
-            msg.torque.z,
-        ])
+        # Extract commands
+        surge = msg.linear.x    # Forward/backward
+        sway = msg.linear.y     # Left/right  
+        heave = msg.linear.z    # Up/down
+        yaw = msg.angular.z     # Rotation
         
-        self.allocate_and_publish(wrench)
-    
-    def allocate_and_publish(self, wrench: np.ndarray):
-        self.last_wrench = wrench
+        # ==================================================================
+        # HORIZONTAL THRUSTERS (T1-T4) - 45° vectored configuration
+        # ==================================================================
+        cos45 = 0.7071
         
-        raw_thrusts = self.TAM_pinv @ wrench
+        # T1: Front-Left (contributes to: surge, sway, yaw)
+        t1 = cos45 * (surge + sway) - yaw * 2.0
         
-        saturated_thrusts = np.clip(raw_thrusts, -self.max_thrust, self.max_thrust)
+        # T2: Front-Right (contributes to: surge, -sway, -yaw)
+        t2 = cos45 * (surge - sway) + yaw * 2.0
         
-        final_thrusts = np.where(
-            np.abs(saturated_thrusts) < self.dead_zone,
-            0.0,
-            saturated_thrusts
-        )
+        # T3: Back-Left (contributes to: -surge, sway, -yaw)
+        t3 = cos45 * (-surge + sway) + yaw * 2.0
         
-        self.last_thrusts = final_thrusts
+        # T4: Back-Right (contributes to: -surge, -sway, yaw)
+        t4 = cos45 * (-surge - sway) - yaw * 2.0
         
-        if not np.allclose(raw_thrusts, saturated_thrusts):
-            self.get_logger().warn(
-                'Thruster saturation occurred! '
-                f'Max raw thrust: {np.max(np.abs(raw_thrusts)):.2f}'
-            )
+        # ==================================================================
+        # VERTICAL THRUSTERS (T5-T6) - Point DOWN
+        # ==================================================================
+        # CRITICAL FIX: Based on test results, negative thrust = AUV goes UP
+        # So to go DOWN (heave < 0), we need POSITIVE thrust
+        # To go UP (heave > 0), we need NEGATIVE thrust
+        # Therefore: thrust = -heave
         
-        for i, (pub, thrust) in enumerate(zip(self.thruster_pubs, final_thrusts)):
+        t5 = -heave * 2.5  # Front vertical (stronger for better control)
+        t6 = -heave * 2.5  # Back vertical
+        
+        # Apply limits and publish
+        thrusts = [t1, t2, t3, t4, t5, t6]
+        
+        for i, thrust in enumerate(thrusts):
+            # Clamp to max thrust
+            thrust = max(-self.max_thrust, min(thrust, self.max_thrust))
+            
+            # Publish
             msg = Float64()
             msg.data = float(thrust)
-            pub.publish(msg)
+            self.thruster_pubs[i].publish(msg)
     
     def publish_diagnostics(self):
-        if np.any(self.last_thrusts != 0):
+        """Print diagnostic information"""
+        if self.last_cmd:
+            cmd = self.last_cmd
             self.get_logger().info(
-                f'Wrench: [{", ".join([f"{w:6.2f}" for w in self.last_wrench])}] | '
-                f'Thrusts: [{", ".join([f"{t:5.1f}" for t in self.last_thrusts])}]',
-                throttle_duration_sec=2.0
+                f'Cmd: vx={cmd.linear.x:.2f}, vy={cmd.linear.y:.2f}, '
+                f'vz={cmd.linear.z:.2f}, yaw={cmd.angular.z:.2f}',
+                throttle_duration_sec=0.9
             )
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = EnhancedThrusterMapper()
+    node = SimpleThrusterMapper()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
