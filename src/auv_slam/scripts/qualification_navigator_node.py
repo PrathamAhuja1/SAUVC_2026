@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-COMPLETE FIXED Qualification Navigator - STAYS SUBMERGED DURING U-TURN
-Only modifications in navigator logic, no thruster mapper changes needed
-
-CRITICAL FIXES:
-1. VERY SLOW forward speed (0.12 m/s) - minimizes hydrodynamic lift
-2. ULTRA-AGGRESSIVE depth control (5x-6x gains) - powerful corrections
-3. STRONG downward bias (-0.4 m/s) - compensates for lift
-4. Emergency surface prevention - forces down if shallow
-5. Continuous depth monitoring - catches issues early
+QUALIFICATION NAVIGATOR - HEADING LOCK EDITION
+Strategy:
+1. Align visually at 2.5m
+2. Lock Compass Heading
+3. Drive Blindly through gate
+4. Unlock after clearance -> U-turn
 """
 
 import rclpy
@@ -19,7 +16,6 @@ from nav_msgs.msg import Odometry
 import time
 import math
 
-
 class QualificationNavigator(Node):
     def __init__(self):
         super().__init__('qualification_navigator')
@@ -29,623 +25,198 @@ class QualificationNavigator(Node):
         self.SEARCHING = 1
         self.APPROACHING = 2
         self.ALIGNING = 3
-        self.FINAL_APPROACH = 4
-        self.PASSING = 5
+        self.PASSING_HEADING_LOCK = 5  # NEW: Blind drive with compass lock
         self.CLEARING = 6
         self.UTURN = 7
         self.POST_UTURN_ALIGN = 8
-        self.REVERSE_SEARCHING = 9
         self.REVERSE_APPROACHING = 10
-        self.REVERSE_ALIGNING = 11
-        self.REVERSE_FINAL_APPROACH = 12
-        self.REVERSE_PASSING = 13
+        self.REVERSE_PASSING_LOCK = 13 # NEW: Reverse blind drive
         self.REVERSE_CLEARING = 14
         self.COMPLETED = 15
         
         self.state = self.SUBMERGING
-        
-        # CRITICAL: 0.55m clearance as per SAUVC rules
         self.gate_x_position = 0.0
-        self.mission_depth = -0.8
+        
+        # Clearance Parameters (SAUVC Rules)
         self.auv_length = 0.46
-        self.clearance_margin = 0.36
+        self.clearance_margin = 0.60 
         
         self.forward_clearance_x = self.gate_x_position + self.auv_length + self.clearance_margin
         self.reverse_clearance_x = self.gate_x_position - self.auv_length - self.clearance_margin
         
-        # Parameters
-        self.declare_parameter('search_forward_speed', 0.4)
-        self.declare_parameter('approach_speed', 0.6)
-        self.declare_parameter('approach_stop_distance', 3.0)
-        self.declare_parameter('alignment_distance', 3.0)
-        self.declare_parameter('alignment_threshold', 0.06)
-        self.declare_parameter('alignment_max_time', 20.0)
-        self.declare_parameter('final_approach_speed', 0.5)
-        self.declare_parameter('passing_trigger_distance', 1.0)
-        self.declare_parameter('passing_speed', 1.0)
+        # Params
+        self.declare_parameter('mission_depth', -0.8)
+        self.declare_parameter('passing_trigger_dist', 1.8) # Lock heading when closer than this
+        self.declare_parameter('passing_speed', 0.8)
+        self.declare_parameter('uturn_speed', 0.12)
         
-        # CRITICAL: U-turn parameters - EXTREME ANTI-SURFACING MODE
-        self.declare_parameter('uturn_forward_speed', 0.12)  # VERY slow
-        self.declare_parameter('uturn_angular_speed', 0.30)  # Slower rotation
-        self.declare_parameter('uturn_depth', -0.8)
-        self.declare_parameter('uturn_depth_bias', -0.4)  # Strong downward bias
-        
-        self.search_forward_speed = self.get_parameter('search_forward_speed').value
-        self.approach_speed = self.get_parameter('approach_speed').value
-        self.approach_stop_distance = self.get_parameter('approach_stop_distance').value
-        self.alignment_distance = self.get_parameter('alignment_distance').value
-        self.alignment_threshold = self.get_parameter('alignment_threshold').value
-        self.alignment_max_time = self.get_parameter('alignment_max_time').value
-        self.final_approach_speed = self.get_parameter('final_approach_speed').value
-        self.passing_trigger_distance = self.get_parameter('passing_trigger_distance').value
+        self.mission_depth = self.get_parameter('mission_depth').value
+        self.trigger_dist = self.get_parameter('passing_trigger_dist').value
         self.passing_speed = self.get_parameter('passing_speed').value
-        self.gate_width = 1.5
+        self.uturn_speed = self.get_parameter('uturn_speed').value
         
-        self.uturn_forward_speed = self.get_parameter('uturn_forward_speed').value
-        self.uturn_angular_speed = self.get_parameter('uturn_angular_speed').value
-        self.uturn_depth = self.get_parameter('uturn_depth').value
-        self.uturn_depth_bias = self.get_parameter('uturn_depth_bias').value
-        
-        # State variables
+        # Variables
         self.gate_detected = False
         self.alignment_error = 0.0
         self.estimated_distance = 999.0
-        self.frame_position = 0.0
-        self.confidence = 0.0
-        self.current_depth = 0.0
         self.current_position = None
         self.current_yaw = 0.0
-        
-        self.passing_start_position = None
-        self.alignment_start_time = 0.0
-        self.state_start_time = time.time()
-        self.uturn_start_yaw = 0.0
-        self.uturn_start_time = 0.0
-        self.uturn_start_x = 0.0
+        self.locked_yaw = 0.0 
         self.reverse_mode = False
-        
-        self.first_pass_complete = False
-        self.second_pass_complete = False
-        
-        self.gate_lost_time = 0.0
-        self.gate_lost_timeout = 3.0
-        self.mission_start_time = time.time()
+        self.uturn_start_time = 0.0
+        self.uturn_start_yaw = 0.0
         
         # Subscriptions
         self.create_subscription(Bool, '/qualification/gate_detected', self.gate_cb, 10)
         self.create_subscription(Float32, '/qualification/alignment_error', self.align_cb, 10)
         self.create_subscription(Float32, '/qualification/estimated_distance', self.dist_cb, 10)
-        self.create_subscription(Float32, '/qualification/frame_position', self.frame_pos_cb, 10)
-        self.create_subscription(Float32, '/qualification/confidence', self.conf_cb, 10)
         self.create_subscription(Odometry, '/ground_truth/odom', self.odom_cb, 10)
         
         # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
         self.state_pub = self.create_publisher(String, '/qualification/state', 10)
         self.reverse_mode_pub = self.create_publisher(Bool, '/mission/reverse_mode', 10)
-        self.clear_center_lock_pub = self.create_publisher(Bool, '/mission/clear_center_lock', 10)
         
         self.create_timer(0.05, self.control_loop)
+        self.get_logger().info('✅ NAVIGATOR: HEADING LOCK ENABLED')
         
-        self.get_logger().info('='*70)
-        self.get_logger().info('✅ QUALIFICATION NAVIGATOR - EXTREME ANTI-SURFACING MODE')
-        self.get_logger().info('='*70)
-        self.get_logger().info('   ✓ VERY SLOW U-turn (0.12 m/s) - minimal lift')
-        self.get_logger().info('   ✓ ULTRA-AGGRESSIVE depth control (5x-6x gains)')
-        self.get_logger().info('   ✓ STRONG downward bias (-0.4 m/s)')
-        self.get_logger().info('   ✓ Emergency surface prevention')
-        self.get_logger().info(f'   Forward clearance: X > {self.forward_clearance_x:.2f}m')
-        self.get_logger().info(f'   Reverse clearance: X < {self.reverse_clearance_x:.2f}m')
-        self.get_logger().info('='*70)
+    def gate_cb(self, msg): self.gate_detected = msg.data
+    def align_cb(self, msg): self.alignment_error = msg.data
+    def dist_cb(self, msg): self.estimated_distance = msg.data
     
-    def gate_cb(self, msg: Bool):
-        self.gate_detected = msg.data
-    
-    def align_cb(self, msg: Float32):
-        self.alignment_error = msg.data
-    
-    def dist_cb(self, msg: Float32):
-        self.estimated_distance = msg.data
-    
-    def frame_pos_cb(self, msg: Float32):
-        self.frame_position = msg.data
-    
-    def conf_cb(self, msg: Float32):
-        self.confidence = msg.data
-    
-    def odom_cb(self, msg: Odometry):
+    def odom_cb(self, msg):
         self.current_depth = msg.pose.pose.position.z
-        self.current_position = (
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y,
-            msg.pose.pose.position.z
-        )
-        
+        self.current_position = (msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z)
         q = msg.pose.pose.orientation
         siny_cosp = 2 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
         self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
-    
+
     def control_loop(self):
         cmd = Twist()
         
-        # Depth control based on state
-        if self.state == self.PASSING or self.state == self.REVERSE_PASSING:
-            cmd.linear.z = self.gentle_depth_control(self.mission_depth)
-        elif self.state == self.UTURN:
-            # U-turn has SPECIAL depth control (done in uturn function)
-            pass
-        else:
+        # Depth Control (Except during U-turn)
+        if self.state != self.UTURN:
             cmd.linear.z = self.depth_control(self.mission_depth)
-        
-        # State machine
+            
+        # --- STATE MACHINE ---
         if self.state == self.SUBMERGING:
-            cmd = self.submerge(cmd)
-        elif self.state == self.SEARCHING:
-            cmd = self.searching(cmd)
-        elif self.state == self.APPROACHING:
-            cmd = self.approaching(cmd)
-        elif self.state == self.ALIGNING:
-            cmd = self.aligning(cmd)
-        elif self.state == self.FINAL_APPROACH:
-            cmd = self.final_approach(cmd)
-        elif self.state == self.PASSING:
-            cmd = self.passing(cmd)
-        elif self.state == self.CLEARING:
-            cmd = self.clearing(cmd)
-        elif self.state == self.UTURN:
-            cmd = self.uturn(cmd)
-        elif self.state == self.POST_UTURN_ALIGN:
-            cmd = self.post_uturn_align(cmd)
-        elif self.state == self.REVERSE_SEARCHING:
-            cmd = self.searching(cmd)
-        elif self.state == self.REVERSE_APPROACHING:
-            cmd = self.approaching(cmd)
-        elif self.state == self.REVERSE_ALIGNING:
-            cmd = self.aligning(cmd)
-        elif self.state == self.REVERSE_FINAL_APPROACH:
-            cmd = self.final_approach(cmd)
-        elif self.state == self.REVERSE_PASSING:
-            cmd = self.passing(cmd)
-        elif self.state == self.REVERSE_CLEARING:
-            cmd = self.reverse_clearing(cmd)
-        elif self.state == self.COMPLETED:
-            cmd = self.completed(cmd)
-        
-        self.cmd_vel_pub.publish(cmd)
-        self.state_pub.publish(String(data=self.get_state_name()))
-    
-    def depth_control(self, target_depth: float) -> float:
-        """Normal depth control"""
-        depth_error = target_depth - self.current_depth
-        deadband = 0.15
-        
-        if abs(depth_error) < deadband:
-            return 0.0
-        
-        if abs(depth_error) < 0.4:
-            z_cmd = depth_error * 0.4
-        elif abs(depth_error) < 0.8:
-            z_cmd = depth_error * 0.6
-        else:
-            z_cmd = depth_error * 0.8
-        
-        return max(-0.6, min(z_cmd, 0.6))
-    
-    def gentle_depth_control(self, target_depth: float) -> float:
-        """Gentle depth control during passage"""
-        depth_error = target_depth - self.current_depth
-        deadband = 0.25
-        
-        if abs(depth_error) < deadband:
-            return 0.0
-        
-        z_cmd = depth_error * 0.2
-        return max(-0.3, min(z_cmd, 0.3))
-    
-    def submerge(self, cmd: Twist) -> Twist:
-        if abs(self.mission_depth - self.current_depth) < 0.3:
-            if time.time() - self.state_start_time > 3.0:
-                self.get_logger().info('✅ Submerged - starting search')
-                self.reverse_mode_pub.publish(Bool(data=self.reverse_mode))
+            if abs(self.current_depth - self.mission_depth) < 0.2:
                 self.transition_to(self.SEARCHING)
-        return cmd
-    
-    def searching(self, cmd: Twist) -> Twist:
-        if self.gate_detected and self.estimated_distance < 999:
-            self.get_logger().info(f'🎯 Gate found at {self.estimated_distance:.2f}m')
-            if self.reverse_mode:
-                self.transition_to(self.REVERSE_APPROACHING)
-            else:
+
+        elif self.state == self.SEARCHING:
+            if self.gate_detected and self.estimated_distance < 10.0:
                 self.transition_to(self.APPROACHING)
-            return cmd
-        
-        cmd.linear.x = self.search_forward_speed
-        cmd.angular.z = 0.3 if (time.time() % 8 < 4) else -0.3
-        return cmd
-    
-    def approaching(self, cmd: Twist) -> Twist:
-        if not self.gate_detected:
-            cmd.linear.x = 0.2
-            cmd.angular.z = 0.3
-            return cmd
-        
-        if self.estimated_distance <= self.approach_stop_distance:
-            self.get_logger().info(f'🛑 Reached 3m - ALIGNING')
-            if self.reverse_mode:
-                self.transition_to(self.REVERSE_ALIGNING)
-            else:
+            cmd.linear.x = 0.4
+            cmd.angular.z = 0.2 * (1 if (time.time() % 6 < 3) else -1)
+
+        elif self.state == self.APPROACHING:
+            # Slow down and align early
+            if self.estimated_distance < 3.0:
                 self.transition_to(self.ALIGNING)
-            return cmd
-        
-        cmd.linear.x = self.approach_speed
-        cmd.angular.z = -self.frame_position * 1.0
-        return cmd
-    
-    def aligning(self, cmd: Twist) -> Twist:
-        if not self.gate_detected:
-            cmd.linear.x = 0.0
-            cmd.angular.z = 0.3
-            return cmd
-        
-        if self.alignment_start_time == 0.0:
-            self.alignment_start_time = time.time()
-            self.get_logger().info(f'🎯 ALIGNING at 3m')
-        
-        elapsed = time.time() - self.alignment_start_time
-        
-        if elapsed > self.alignment_max_time:
-            self.get_logger().warn('⏰ Alignment timeout')
-            self.alignment_start_time = 0.0
-            if self.reverse_mode:
-                self.transition_to(self.REVERSE_FINAL_APPROACH)
-            else:
-                self.transition_to(self.FINAL_APPROACH)
-            return cmd
-        
-        is_aligned = abs(self.frame_position) < self.alignment_threshold
-        has_confidence = self.confidence > 0.8
-        
-        if is_aligned and has_confidence:
-            self.get_logger().info(f'✅ ALIGNED ({elapsed:.1f}s)')
-            self.alignment_start_time = 0.0
-            if self.reverse_mode:
-                self.transition_to(self.REVERSE_FINAL_APPROACH)
-            else:
-                self.transition_to(self.FINAL_APPROACH)
-            return cmd
-        
-        quality = abs(self.frame_position)
-        if quality > 0.2:
-            cmd.linear.x = 0.0
-            cmd.angular.z = -self.frame_position * 4.0
-        elif quality > 0.1:
-            cmd.linear.x = 0.1
-            cmd.angular.z = -self.frame_position * 3.0
-        else:
+            cmd.linear.x = 0.5
+            cmd.angular.z = -self.alignment_error * 1.5
+
+        elif self.state == self.ALIGNING:
+            # If close enough and aligned, LOCK HEADING and PASS
+            if self.estimated_distance < self.trigger_dist and abs(self.alignment_error) < 0.1:
+                self.locked_yaw = self.current_yaw # <--- LOCK HEADING HERE
+                self.get_logger().info(f'🔒 HEADING LOCKED at {math.degrees(self.locked_yaw):.1f} deg. DRIVING BLIND.')
+                self.transition_to(self.PASSING_HEADING_LOCK)
+                return
+            
+            # Normal visual alignment
             cmd.linear.x = 0.15
-            cmd.angular.z = -self.frame_position * 2.0
-        
-        return cmd
-    
-    def final_approach(self, cmd: Twist) -> Twist:
-        if self.estimated_distance <= self.passing_trigger_distance:
-            if abs(self.frame_position) < 0.15:
-                self.get_logger().info(f'🚀 COMMITTING TO PASSAGE')
-                self.passing_start_position = self.current_position
-                if self.reverse_mode:
-                    self.transition_to(self.REVERSE_PASSING)
-                else:
-                    self.transition_to(self.PASSING)
-                return cmd
-            else:
-                cmd.linear.x = 0.0
-                cmd.angular.z = -self.frame_position * 4.0
-                return cmd
-        
-        if abs(self.frame_position) > 0.10:
-            cmd.linear.x = self.final_approach_speed * 0.6
-            cmd.angular.z = -self.frame_position * 3.0
-        else:
-            cmd.linear.x = self.final_approach_speed
-            cmd.angular.z = -self.frame_position * 1.5
-        
-        return cmd
-    
-    def passing(self, cmd: Twist) -> Twist:
-        if self.passing_start_position is None:
-            self.passing_start_position = self.current_position
-            direction = "REVERSE" if self.reverse_mode else "FORWARD"
-            self.get_logger().info(f'🚀 {direction} PASSAGE STARTED')
-        
-        if self.current_position:
-            current_x = self.current_position[0]
-            
-            if not self.reverse_mode:
-                auv_back_x = current_x - self.auv_length
-                back_passed = auv_back_x > self.gate_x_position
-            else:
-                auv_back_x = current_x + self.auv_length
-                back_passed = auv_back_x < self.gate_x_position
-            
-            if back_passed:
-                self.get_logger().info('='*70)
-                self.get_logger().info(f'✅ AUV BACK PASSED GATE!')
-                self.get_logger().info(f'   → Entering CLEARING (0.55m more)')
-                self.get_logger().info('='*70)
-                
-                if not self.reverse_mode:
-                    self.first_pass_complete = True
-                    self.transition_to(self.CLEARING)
-                else:
-                    self.second_pass_complete = True
-                    self.transition_to(self.REVERSE_CLEARING)
-                return cmd
-        
-        cmd.linear.x = self.passing_speed
-        cmd.angular.z = 0.0
-        return cmd
-    
-    def clearing(self, cmd: Twist) -> Twist:
-        """Travel 0.55m after back passes gate"""
-        if self.current_position:
-            current_x = self.current_position[0]
-            
-            if current_x >= self.forward_clearance_x:
-                self.get_logger().info('='*70)
-                self.get_logger().info('✅ CLEARANCE COMPLETE (0.55m)')
-                self.get_logger().info('   → Clearing center lock')
-                self.get_logger().info('   → Starting U-TURN')
-                self.get_logger().info('='*70)
-                
-                self.clear_center_lock_pub.publish(Bool(data=True))
-                
-                self.uturn_start_time = 0.0
+            cmd.angular.z = -self.alignment_error * 2.5
+
+        elif self.state == self.PASSING_HEADING_LOCK:
+            # BLIND DRIVE using Compass
+            # Check if we passed the clearance line
+            if self.current_position[0] > self.forward_clearance_x:
+                self.get_logger().info("✅ CLEARED (Forward). Starting U-Turn.")
                 self.transition_to(self.UTURN)
-                return cmd
-            
-            distance_needed = self.forward_clearance_x - current_x
-            self.get_logger().info(
-                f'🏃 CLEARING: X={current_x:.2f}m, need {distance_needed:.2f}m more',
-                throttle_duration_sec=0.4
-            )
-        
-        cmd.linear.x = 0.8
-        return cmd
-    
-    def uturn(self, cmd: Twist) -> Twist:
-        """
-        EXTREME ANTI-SURFACING U-TURN
-        
-        Strategy:
-        1. VERY SLOW forward (0.12 m/s) - minimizes hydrodynamic lift
-        2. ULTRA-AGGRESSIVE depth control (5x-6x gains) - powerful corrections
-        3. STRONG downward bias (-0.4 m/s) - pre-emptive compensation
-        4. Emergency prevention - catches dangerous shallowing
-        5. Continuous monitoring - tight control loop
-        """
-        
-        if self.uturn_start_time == 0.0:
-            self.uturn_start_yaw = self.current_yaw
-            self.uturn_start_time = time.time()
-            self.uturn_start_x = self.current_position[0] if self.current_position else 0.0
-            
-            self.get_logger().info('='*70)
-            self.get_logger().info('🔄 U-TURN - EXTREME ANTI-SURFACING MODE')
-            self.get_logger().info(f'   Starting yaw: {math.degrees(self.uturn_start_yaw):.1f}°')
-            self.get_logger().info(f'   Starting depth: {self.current_depth:.2f}m')
-            self.get_logger().info(f'   Forward: {self.uturn_forward_speed:.2f} m/s (VERY SLOW)')
-            self.get_logger().info(f'   Bias: {self.uturn_depth_bias:.2f} m/s (STRONG DOWN)')
-            self.get_logger().info('='*70)
-        
-        angle_turned = abs(self.normalize_angle(self.current_yaw - self.uturn_start_yaw))
-        elapsed = time.time() - self.uturn_start_time
-        
-        # Check completion
-        if angle_turned > (math.pi - 0.17):
-            self.get_logger().info('='*70)
-            self.get_logger().info(f'✅ U-TURN COMPLETE ({elapsed:.1f}s)')
-            self.get_logger().info(f'   Final depth: {self.current_depth:.2f}m')
-            self.get_logger().info('   → Aligning for reverse pass')
-            self.get_logger().info('='*70)
-            
+                return
+
+            # Maintain Locked Heading
+            yaw_error = self.normalize_angle(self.locked_yaw - self.current_yaw)
+            cmd.angular.z = yaw_error * 2.0 # Strong correction to hold course
+            cmd.linear.x = self.passing_speed
+
+        elif self.state == self.UTURN:
+            cmd = self.perform_uturn(cmd)
+
+        elif self.state == self.POST_UTURN_ALIGN:
             self.reverse_mode = True
             self.reverse_mode_pub.publish(Bool(data=True))
-            self.uturn_start_time = 0.0
-            self.transition_to(self.POST_UTURN_ALIGN)
-            return cmd
-        
-        # CRITICAL FIX 1: VERY SLOW forward speed
-        cmd.linear.x = self.uturn_forward_speed  # 0.12 m/s
-        
-        # CRITICAL FIX 2: Slower angular velocity
-        cmd.angular.z = self.uturn_angular_speed  # 0.30 rad/s
-        
-        # CRITICAL FIX 3: ULTRA-AGGRESSIVE depth control with STRONG bias
-        depth_error = self.uturn_depth - self.current_depth
-        
-        # EMERGENCY LEVEL 1: Dangerously shallow (above -0.3m)
-        if self.current_depth > -0.3:
-            self.get_logger().error(
-                f'🚨🚨 CRITICAL: VERY SHALLOW ({self.current_depth:.2f}m)! MAXIMUM DOWNWARD THRUST!'
-            )
-            cmd.linear.z = -1.5  # MAXIMUM downward
-        
-        # EMERGENCY LEVEL 2: Too shallow (above -0.5m)
-        elif self.current_depth > -0.5:
-            self.get_logger().error(
-                f'🚨 EMERGENCY: TOO SHALLOW ({self.current_depth:.2f}m)! FORCING DOWN!'
-            )
-            cmd.linear.z = -1.2  # Strong downward
-        
-        # CRITICAL: Large error (> 12cm)
-        elif abs(depth_error) > 0.12:
-            # VERY STRONG correction: 6x gain + bias
-            cmd.linear.z = depth_error * 6.0 + self.uturn_depth_bias
-            cmd.linear.z = max(-1.2, min(cmd.linear.z, 0.8))
-        
-        # MODERATE: Medium error (> 7cm)
-        elif abs(depth_error) > 0.07:
-            # STRONG correction: 5x gain + bias
-            cmd.linear.z = depth_error * 5.0 + self.uturn_depth_bias
-            cmd.linear.z = max(-1.0, min(cmd.linear.z, 0.6))
-        
-        # FINE TUNING: Small error
-        else:
-            # ACTIVE correction: 3x gain + reduced bias
-            cmd.linear.z = depth_error * 3.0 + self.uturn_depth_bias * 0.5
-            cmd.linear.z = max(-0.7, min(cmd.linear.z, 0.4))
-        
-        # Enhanced monitoring and logging
-        if abs(depth_error) > 0.08 or self.current_depth > -0.6:
-            severity = "🚨 CRITICAL" if self.current_depth > -0.5 else "⚠️ WARNING"
-            self.get_logger().warn(
-                f'U-TURN {severity}: depth={self.current_depth:.2f}m '
-                f'(target={self.uturn_depth:.2f}m) | '
-                f'error={depth_error:+.2f}m | z_cmd={cmd.linear.z:+.2f}',
-                throttle_duration_sec=0.2
-            )
-        else:
-            self.get_logger().info(
-                f'🔄 U-TURN: {math.degrees(angle_turned):.0f}° / 180° | '
-                f'depth={self.current_depth:.2f}m ✓ | z={cmd.linear.z:+.2f}',
-                throttle_duration_sec=0.4
-            )
-        
-        return cmd
-    
-    def post_uturn_align(self, cmd: Twist) -> Twist:
-        """Align with gate after U-turn"""
-        
-        if self.gate_detected:
-            if abs(self.frame_position) < 0.15:
-                self.get_logger().info('✅ POST-UTURN ALIGNMENT COMPLETE')
+            if self.gate_detected:
                 self.transition_to(self.REVERSE_APPROACHING)
-                return cmd
-            else:
-                cmd.linear.x = 0.2
-                cmd.angular.z = -self.frame_position * 2.0
-        else:
-            cmd.linear.x = 0.3
-            cmd.angular.z = 0.2
-        
-        return cmd
-    
-    def reverse_clearing(self, cmd: Twist) -> Twist:
-        """Reverse clearing - stay submerged"""
-        if self.current_position:
-            current_x = self.current_position[0]
-            
-            if current_x <= self.reverse_clearance_x:
-                self.get_logger().info('='*70)
-                self.get_logger().info('✅ REVERSE CLEARANCE COMPLETE (0.55m)')
-                self.get_logger().info('   🎉 MISSION COMPLETE!')
-                self.get_logger().info('='*70)
+            cmd.angular.z = 0.3
+
+        elif self.state == self.REVERSE_APPROACHING:
+             if self.estimated_distance < self.trigger_dist and abs(self.alignment_error) < 0.1:
+                self.locked_yaw = self.current_yaw # <--- LOCK HEADING REVERSE
+                self.get_logger().info(f'🔒 REVERSE HEADING LOCKED. DRIVING BLIND.')
+                self.transition_to(self.REVERSE_PASSING_LOCK)
+                return
+             cmd.linear.x = 0.4
+             cmd.angular.z = -self.alignment_error * 1.5
+
+        elif self.state == self.REVERSE_PASSING_LOCK:
+            # Check reverse clearance
+            if self.current_position[0] < self.reverse_clearance_x:
+                self.get_logger().info("🏆 MISSION COMPLETE")
                 self.transition_to(self.COMPLETED)
-                return cmd
+                return
+
+            # Maintain Locked Heading
+            yaw_error = self.normalize_angle(self.locked_yaw - self.current_yaw)
+            cmd.angular.z = yaw_error * 2.0
+            cmd.linear.x = self.passing_speed
+
+        elif self.state == self.COMPLETED:
+            cmd.linear.x = 0.0
+            cmd.angular.z = 0.0
+
+        self.cmd_vel_pub.publish(cmd)
+        self.state_pub.publish(String(data=str(self.state)))
+
+    def perform_uturn(self, cmd):
+        # Anti-Surfacing U-Turn
+        if self.uturn_start_time == 0:
+            self.uturn_start_time = time.time()
+            self.uturn_start_yaw = self.current_yaw
             
-            distance_needed = current_x - self.reverse_clearance_x
-            self.get_logger().info(
-                f'🏃 REVERSE CLEARING: X={current_x:.2f}m, need {distance_needed:.2f}m',
-                throttle_duration_sec=0.4
-            )
+        angle_turned = abs(self.normalize_angle(self.current_yaw - self.uturn_start_yaw))
+        if angle_turned > (math.pi - 0.2):
+            self.transition_to(self.POST_UTURN_ALIGN)
+            self.uturn_start_time = 0
+            return cmd
+            
+        cmd.linear.x = self.uturn_speed
+        cmd.angular.z = 0.3
         
-        cmd.linear.x = 0.8
+        # Bias depth down to prevent surfacing
+        err = -0.8 - self.current_depth
+        cmd.linear.z = (err * 2.0) - 0.4 
         return cmd
-    
-    def completed(self, cmd: Twist) -> Twist:
-        """Mission complete - stay submerged"""
-        
-        if not hasattr(self, '_completion_reported'):
-            self._completion_reported = False
-        
-        if not self._completion_reported:
-            total_time = time.time() - self.mission_start_time
-            
-            self.get_logger().info('='*70)
-            self.get_logger().info('🏆 QUALIFICATION COMPLETE!')
-            self.get_logger().info('='*70)
-            self.get_logger().info(f'   Pass 1: {"✅" if self.first_pass_complete else "❌"}')
-            self.get_logger().info(f'   Pass 2: {"✅" if self.second_pass_complete else "❌"}')
-            self.get_logger().info(f'   Total time: {total_time:.1f}s')
-            self.get_logger().info(f'   Bot depth: {self.current_depth:.2f}m (SUBMERGED ✓)')
-            
-            if self.first_pass_complete and self.second_pass_complete:
-                self.get_logger().info('   🏆 POINTS: 2 - QUALIFIED FOR FINALS!')
-            elif self.first_pass_complete:
-                self.get_logger().info('   ⚠️ POINTS: 1')
-            
-            self.get_logger().info('='*70)
-            self._completion_reported = True
-        
-        # Stay in place at mission depth
-        cmd.linear.x = 0.0
-        cmd.linear.y = 0.0
-        cmd.angular.z = 0.0
-        
-        # Maintain depth
-        depth_error = self.mission_depth - self.current_depth
-        if abs(depth_error) > 0.15:
-            cmd.linear.z = depth_error * 0.5
-            cmd.linear.z = max(-0.4, min(cmd.linear.z, 0.4))
-        else:
-            cmd.linear.z = 0.0
-        
-        return cmd
-    
-    def transition_to(self, new_state: int):
-        """Transition to new state"""
-        old_name = self.get_state_name()
-        self.state = new_state
-        self.state_start_time = time.time()
-        new_name = self.get_state_name()
-        
-        self.get_logger().info(f'🔄 STATE: {old_name} → {new_name}')
-    
-    def get_state_name(self) -> str:
-        """Get state name"""
-        names = {
-            self.SUBMERGING: 'SUBMERGING',
-            self.SEARCHING: 'SEARCHING',
-            self.APPROACHING: 'APPROACHING',
-            self.ALIGNING: 'ALIGNING',
-            self.FINAL_APPROACH: 'FINAL_APPROACH',
-            self.PASSING: 'PASSING',
-            self.CLEARING: 'CLEARING',
-            self.UTURN: 'UTURN',
-            self.POST_UTURN_ALIGN: 'POST_UTURN_ALIGN',
-            self.REVERSE_SEARCHING: 'REVERSE_SEARCHING',
-            self.REVERSE_APPROACHING: 'REVERSE_APPROACHING',
-            self.REVERSE_ALIGNING: 'REVERSE_ALIGNING',
-            self.REVERSE_FINAL_APPROACH: 'REVERSE_FINAL_APPROACH',
-            self.REVERSE_PASSING: 'REVERSE_PASSING',
-            self.REVERSE_CLEARING: 'REVERSE_CLEARING',
-            self.COMPLETED: 'COMPLETED',
-        }
-        return names.get(self.state, 'UNKNOWN')
-    
-    @staticmethod
-    def normalize_angle(angle: float) -> float:
-        while angle > math.pi:
-            angle -= 2 * math.pi
-        while angle < -math.pi:
-            angle += 2 * math.pi
+
+    def depth_control(self, target):
+        err = target - self.current_depth
+        return max(-0.5, min(err * 1.0, 0.5))
+
+    def normalize_angle(self, angle):
+        while angle > math.pi: angle -= 2*math.pi
+        while angle < -math.pi: angle += 2*math.pi
         return angle
 
+    def transition_to(self, new_state):
+        self.state = new_state
+        self.get_logger().info(f'State Change: {self.state}')
 
 def main(args=None):
     rclpy.init(args=args)
-    node = QualificationNavigator()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop_cmd = Twist()
-        node.cmd_vel_pub.publish(stop_cmd)
-        node.destroy_node()
-        rclpy.shutdown()
-
+    rclpy.spin(QualificationNavigator())
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
