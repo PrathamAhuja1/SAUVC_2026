@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Qualification Mission Launch File
-Updated for 1.55m clearance, no CLEARING state
+Qualification Mission Launch File - With Fixed Center Lock
+Compatible with properly fixed detector that never moves locked center
 """
 
 import os
@@ -15,7 +15,7 @@ import launch_ros.descriptions
 def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
     
-    # --- Paths ---
+    # Paths
     urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
     rviz_config = os.path.join(auv_slam_share, 'rviz', 'urdf_config.rviz')
     bridge_config = os.path.join(auv_slam_share, 'config', 'ign_bridge.yaml')
@@ -24,7 +24,7 @@ def generate_launch_description():
     thruster_params = os.path.join(auv_slam_share, 'config', 'thruster_params.yaml')
     qual_params = os.path.join(auv_slam_share, 'config', 'qualification_params.yaml')
     
-    # World: SAUVC Qualification Pool (25m x 16m)
+    # World: SAUVC Qualification Pool
     world_file = os.path.join(auv_slam_share, 'worlds', 'qualification_world.sdf')
     
     # Gazebo Environment Setup
@@ -41,9 +41,11 @@ def generate_launch_description():
                       ':'.join([gz_resource_path, gz_models_path])
     }
 
-    # --- Simulation Nodes ---
+    # ============================================================================
+    # SIMULATION NODES
+    # ============================================================================
 
-    # 1. Robot State Publisher (REQUIRED for spawning)
+    # 1. Robot State Publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -101,7 +103,9 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # --- Mission Nodes ---
+    # ============================================================================
+    # MISSION NODES
+    # ============================================================================
 
     # 6. Thruster Mapper
     thruster_mapper = Node(
@@ -112,7 +116,7 @@ def generate_launch_description():
         parameters=[thruster_params, {'use_sim_time': True}]
     )
     
-    # 7. Qualification Gate Detector
+    # 7. FIXED Qualification Gate Detector (Center lock never moves)
     gate_detector = TimerAction(
         period=5.0,
         actions=[
@@ -126,7 +130,7 @@ def generate_launch_description():
         ]
     )
     
-    # 8. Qualification Navigator
+    # 8. Qualification Navigator (Compatible with fixed center)
     navigator = TimerAction(
         period=8.0,
         actions=[
@@ -140,7 +144,7 @@ def generate_launch_description():
         ]
     )
     
-    # 9. Safety Monitor - NO MORE TIMEOUT WARNINGS
+    # 9. Safety Monitor
     safety_monitor = Node(
         package='auv_slam',
         executable='safety_monitor_node.py',
@@ -152,7 +156,7 @@ def generate_launch_description():
             'max_roll': 0.785,
             'max_pitch': 0.785,
             'watchdog_timeout': 5.0,
-            'max_mission_time': 36000.0,  # 10 hours - no timeout warnings
+            'max_mission_time': 36000.0,
             'pool_bounds_x': [-12.5, 12.5],
             'pool_bounds_y': [-8.0, 8.0],
             'use_sim_time': True

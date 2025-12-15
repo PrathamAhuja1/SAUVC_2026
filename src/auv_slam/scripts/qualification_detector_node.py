@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
-FINAL FIXED Qualification Gate Detector
-Key Fixes:
-1. NO emergency straight mode
-2. Center lock clears only after clearance
-3. Proper re-locking for reverse pass
+PROPERLY FIXED Qualification Gate Detector
+CRITICAL FIX: Locked center NEVER moves after being set
 """
 
 import rclpy
@@ -30,7 +27,7 @@ class QualificationDetector(Node):
         self.orange_lower = np.array([0, 20, 40])
         self.orange_upper = np.array([35, 255, 255])
         
-        self.min_area = 3
+        self.min_area = 300
         self.gate_detection_history = deque(maxlen=2)
         self.reverse_mode = False
         
@@ -40,14 +37,15 @@ class QualificationDetector(Node):
         self.expected_gate_width = 1.5
         self.gate_width_tolerance = 0.3
         
-        # Center locking
+        # Center locking - CRITICAL VARIABLES
         self.gate_center_locked = False
-        self.locked_center_x = None
-        self.locked_center_y = None
+        self.locked_center_x = None  # FIXED: Once set, NEVER changes
+        self.locked_center_y = None  # FIXED: Once set, NEVER changes
         self.lock_confidence_threshold = 0.8
         self.lock_distance_threshold = 2.5
         self.center_lock_enabled = True
         
+        # Smoothing only for unlocked state
         self.center_history = deque(maxlen=5)
         self.center_smoothing_alpha = 0.3
         
@@ -85,10 +83,10 @@ class QualificationDetector(Node):
         self.frame_position_pub = self.create_publisher(Float32, '/qualification/frame_position', 10)
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ FINAL FIXED Qualification Detector')
-        self.get_logger().info('   ✓ NO emergency straight mode')
-        self.get_logger().info('   ✓ Lock clears after clearance only')
-        self.get_logger().info('   ✓ Proper re-locking for reverse')
+        self.get_logger().info('✅ PROPERLY FIXED Qualification Detector')
+        self.get_logger().info('   ✓ Locked center NEVER moves after being set')
+        self.get_logger().info('   ✓ Lock clears only after clearance signal')
+        self.get_logger().info('   ✓ Proper re-locking for reverse pass')
         self.get_logger().info('='*70)
     
     def reverse_mode_callback(self, msg: Bool):
@@ -197,33 +195,33 @@ class QualificationDetector(Node):
         frame_position = 0.0
         confidence = 0.0
         
-        # NO EMERGENCY STRAIGHT MODE - removed completely
-        
+        # ============================================================================
+        # CRITICAL FIX: When locked, use ONLY the original locked position
+        # DO NOT update it based on new detections!
+        # ============================================================================
         if self.gate_center_locked:
-            # Use locked center
+            # Use the FIXED locked center - DO NOT CHANGE IT
             gate_detected = True
             confidence = 1.0
             
-            if len(self.center_history) > 0:
-                smoothed_x = int(np.mean([c[0] for c in self.center_history]))
-                smoothed_y = int(np.mean([c[1] for c in self.center_history]))
-                gate_center_x = smoothed_x
-                gate_center_y = smoothed_y
-            else:
-                gate_center_x = self.locked_center_x
-                gate_center_y = self.locked_center_y
+            gate_center_x = self.locked_center_x
+            gate_center_y = self.locked_center_y
             
             frame_position = (gate_center_x - w/2) / (w/2)
             alignment_error = frame_position
             
+            # Visualization
             cv2.circle(debug_img, (gate_center_x, gate_center_y), 30, (0, 255, 255), -1)
             cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 255), 5)
-            cv2.putText(debug_img, "CENTER LOCKED", 
-                       (gate_center_x - 120, gate_center_y - 50),
+            cv2.putText(debug_img, "CENTER LOCKED (FIXED)", 
+                       (gate_center_x - 150, gate_center_y - 50),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
+            cv2.putText(debug_img, f"Locked: ({gate_center_x}, {gate_center_y})", 
+                       (gate_center_x - 120, gate_center_y + 50),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
         elif len(posts) >= 2:
-            # Two posts detected
+            # Two posts detected - NOT LOCKED YET
             posts_sorted = sorted(posts, key=lambda p: p['x_pos'])
             left_post = posts_sorted[0]
             right_post = posts_sorted[1]
@@ -235,7 +233,7 @@ class QualificationDetector(Node):
             partial_gate = False
             confidence = 1.0
             
-            # Smooth center
+            # Smooth center ONLY when unlocked
             if len(self.center_history) > 0:
                 prev_center = self.center_history[-1]
                 gate_center_x = int(self.center_smoothing_alpha * detected_center_x + 
@@ -248,35 +246,32 @@ class QualificationDetector(Node):
             
             self.center_history.append((gate_center_x, gate_center_y))
             
-            # Lock if enabled and close enough
+            # Lock if conditions are met
             if self.center_lock_enabled and not self.gate_center_locked:
                 if estimated_distance < 3.5 and confidence >= 0.9:
+                    # LOCK THE CENTER - This position will NEVER change
                     self.gate_center_locked = True
                     self.locked_center_x = gate_center_x
                     self.locked_center_y = gate_center_y
                     self.get_logger().info(
-                        f'🔒 CENTER LOCKED at {estimated_distance:.2f}m '
-                        f'(reverse={self.reverse_mode})'
+                        f'🔒 CENTER LOCKED at ({gate_center_x}, {gate_center_y}) '
+                        f'dist={estimated_distance:.2f}m (reverse={self.reverse_mode})'
                     )
-            
-            if self.gate_center_locked:
-                self.locked_center_x = gate_center_x
-                self.locked_center_y = gate_center_y
             
             frame_position = (gate_center_x - w/2) / (w/2)
             alignment_error = frame_position
             
             # Draw detections
-            cv2.circle(debug_img, (gate_center_x, gate_center_y), 25, (0, 255, 255), -1)
+            cv2.circle(debug_img, (gate_center_x, gate_center_y), 25, (0, 255, 0), -1)
             cv2.line(debug_img, left_post['center'], right_post['center'], (0, 255, 0), 3)
             
             for post in [left_post, right_post]:
                 x, y, w_b, h_b = post['bbox']
                 cv2.rectangle(debug_img, (x, y), (x+w_b, y+h_b), (255, 0, 255), 3)
             
-            cv2.putText(debug_img, "FULL GATE", 
-                       (gate_center_x - 80, gate_center_y - 50),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
+            cv2.putText(debug_img, "FULL GATE (UNLOCKED)", 
+                       (gate_center_x - 140, gate_center_y - 50),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
         
         elif len(posts) == 1:
             # Single post
@@ -321,6 +316,11 @@ class QualificationDetector(Node):
         cv2.putText(debug_img, f"Lock: {lock_status}", 
                    (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, lock_color, 2)
         status_y += 35
+        
+        if self.gate_center_locked:
+            cv2.putText(debug_img, f"Locked Pos: ({self.locked_center_x}, {self.locked_center_y})", 
+                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            status_y += 35
         
         if not self.center_lock_enabled:
             cv2.putText(debug_img, "LOCK DISABLED (U-TURN)", 
