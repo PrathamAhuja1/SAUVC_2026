@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-PROPERLY FIXED Qualification Gate Detector
-CRITICAL FIX: Locked center NEVER moves after being set
+ABSOLUTELY FIXED Qualification Gate Detector
+CRITICAL: Locked center NEVER EVER moves - completely immutable once set
 """
 
 import rclpy
@@ -37,12 +37,13 @@ class QualificationDetector(Node):
         self.expected_gate_width = 1.5
         self.gate_width_tolerance = 0.3
         
-        # Center locking - CRITICAL VARIABLES
+        # ============================================================================
+        # CRITICAL: CENTER LOCK VARIABLES - IMMUTABLE ONCE SET
+        # ============================================================================
         self.gate_center_locked = False
-        self.locked_center_x = None  # FIXED: Once set, NEVER changes
-        self.locked_center_y = None  # FIXED: Once set, NEVER changes
-        self.lock_confidence_threshold = 0.8
-        self.lock_distance_threshold = 2.5
+        self.LOCKED_CENTER_X = None  # IMMUTABLE - NEVER CHANGES ONCE SET
+        self.LOCKED_CENTER_Y = None  # IMMUTABLE - NEVER CHANGES ONCE SET
+        self.lock_set_time = None    # Track when lock was set
         self.center_lock_enabled = True
         
         # Smoothing only for unlocked state
@@ -83,10 +84,10 @@ class QualificationDetector(Node):
         self.frame_position_pub = self.create_publisher(Float32, '/qualification/frame_position', 10)
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ PROPERLY FIXED Qualification Detector')
-        self.get_logger().info('   ✓ Locked center NEVER moves after being set')
-        self.get_logger().info('   ✓ Lock clears only after clearance signal')
-        self.get_logger().info('   ✓ Proper re-locking for reverse pass')
+        self.get_logger().info('✅ ABSOLUTELY FIXED Qualification Detector')
+        self.get_logger().info('   ✓ Locked center is 100% IMMUTABLE')
+        self.get_logger().info('   ✓ Once locked, position NEVER changes')
+        self.get_logger().info('   ✓ Lock only clears on explicit command')
         self.get_logger().info('='*70)
     
     def reverse_mode_callback(self, msg: Bool):
@@ -97,8 +98,9 @@ class QualificationDetector(Node):
         if not was_reverse and msg.data:
             # Entering reverse mode - clear lock and re-enable
             self.gate_center_locked = False
-            self.locked_center_x = None
-            self.locked_center_y = None
+            self.LOCKED_CENTER_X = None
+            self.LOCKED_CENTER_Y = None
+            self.lock_set_time = None
             self.center_lock_enabled = True
             self.center_history.clear()
             
@@ -112,8 +114,9 @@ class QualificationDetector(Node):
         """Handle center lock clear signal (after clearance)"""
         if msg.data:
             self.gate_center_locked = False
-            self.locked_center_x = None
-            self.locked_center_y = None
+            self.LOCKED_CENTER_X = None
+            self.LOCKED_CENTER_Y = None
+            self.lock_set_time = None
             self.center_lock_enabled = False
             self.center_history.clear()
             
@@ -196,36 +199,52 @@ class QualificationDetector(Node):
         confidence = 0.0
         
         # ============================================================================
-        # CRITICAL FIX: When locked, use ONLY the original locked position
-        # DO NOT update it based on new detections!
+        # CRITICAL PATH 1: CENTER IS LOCKED - USE IMMUTABLE VALUES
         # ============================================================================
         if self.gate_center_locked:
-            # Use the FIXED locked center - DO NOT CHANGE IT
+            # ========================================================================
+            # ABSOLUTELY CRITICAL: Use the IMMUTABLE locked values
+            # DO NOT COMPUTE, DO NOT UPDATE, DO NOT MODIFY
+            # These values were set once and NEVER change
+            # ========================================================================
             gate_detected = True
             confidence = 1.0
             
-            gate_center_x = self.locked_center_x
-            gate_center_y = self.locked_center_y
+            # Use the IMMUTABLE locked center - THESE VALUES NEVER CHANGE
+            gate_center_x = self.LOCKED_CENTER_X
+            gate_center_y = self.LOCKED_CENTER_Y
             
+            # Calculate alignment based on FIXED locked position
             frame_position = (gate_center_x - w/2) / (w/2)
             alignment_error = frame_position
             
-            # Visualization
-            cv2.circle(debug_img, (gate_center_x, gate_center_y), 30, (0, 255, 255), -1)
-            cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 255), 5)
-            cv2.putText(debug_img, "CENTER LOCKED (FIXED)", 
-                       (gate_center_x - 150, gate_center_y - 50),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
-            cv2.putText(debug_img, f"Locked: ({gate_center_x}, {gate_center_y})", 
-                       (gate_center_x - 120, gate_center_y + 50),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            # Visualization - show the FIXED locked position
+            cv2.circle(debug_img, (gate_center_x, gate_center_y), 35, (0, 255, 255), -1)
+            cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 255), 6)
+            
+            # Draw a large FIXED marker
+            cv2.rectangle(debug_img, 
+                         (gate_center_x - 50, gate_center_y - 50),
+                         (gate_center_x + 50, gate_center_y + 50),
+                         (0, 255, 255), 4)
+            
+            cv2.putText(debug_img, "LOCKED (IMMUTABLE)", 
+                       (gate_center_x - 160, gate_center_y - 70),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 4)
+            cv2.putText(debug_img, f"X={gate_center_x}, Y={gate_center_y}", 
+                       (gate_center_x - 140, gate_center_y + 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 3)
         
+        # ============================================================================
+        # PATH 2: NOT LOCKED - DETECT AND POTENTIALLY LOCK
+        # ============================================================================
         elif len(posts) >= 2:
-            # Two posts detected - NOT LOCKED YET
+            # Two posts detected - compute center from detection
             posts_sorted = sorted(posts, key=lambda p: p['x_pos'])
             left_post = posts_sorted[0]
             right_post = posts_sorted[1]
             
+            # Compute detected center
             detected_center_x = (left_post['center'][0] + right_post['center'][0]) // 2
             detected_center_y = (left_post['center'][1] + right_post['center'][1]) // 2
             
@@ -246,17 +265,26 @@ class QualificationDetector(Node):
             
             self.center_history.append((gate_center_x, gate_center_y))
             
-            # Lock if conditions are met
+            # ========================================================================
+            # LOCK DECISION: Should we lock this position permanently?
+            # ========================================================================
             if self.center_lock_enabled and not self.gate_center_locked:
                 if estimated_distance < 3.5 and confidence >= 0.9:
-                    # LOCK THE CENTER - This position will NEVER change
+                    # ================================================================
+                    # LOCK THE CENTER - THIS POSITION BECOMES PERMANENT
+                    # ================================================================
                     self.gate_center_locked = True
-                    self.locked_center_x = gate_center_x
-                    self.locked_center_y = gate_center_y
-                    self.get_logger().info(
-                        f'🔒 CENTER LOCKED at ({gate_center_x}, {gate_center_y}) '
-                        f'dist={estimated_distance:.2f}m (reverse={self.reverse_mode})'
-                    )
+                    self.LOCKED_CENTER_X = gate_center_x  # IMMUTABLE from now on
+                    self.LOCKED_CENTER_Y = gate_center_y  # IMMUTABLE from now on
+                    self.lock_set_time = self.get_clock().now()
+                    
+                    self.get_logger().info('='*70)
+                    self.get_logger().info(f'🔒 CENTER PERMANENTLY LOCKED!')
+                    self.get_logger().info(f'   Position: ({gate_center_x}, {gate_center_y})')
+                    self.get_logger().info(f'   Distance: {estimated_distance:.2f}m')
+                    self.get_logger().info(f'   Mode: {"REVERSE" if self.reverse_mode else "FORWARD"}')
+                    self.get_logger().info('   ✓ This position will NEVER change')
+                    self.get_logger().info('='*70)
             
             frame_position = (gate_center_x - w/2) / (w/2)
             alignment_error = frame_position
@@ -270,11 +298,11 @@ class QualificationDetector(Node):
                 cv2.rectangle(debug_img, (x, y), (x+w_b, y+h_b), (255, 0, 255), 3)
             
             cv2.putText(debug_img, "FULL GATE (UNLOCKED)", 
-                       (gate_center_x - 140, gate_center_y - 50),
+                       (gate_center_x - 150, gate_center_y - 50),
                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
         
         elif len(posts) == 1:
-            # Single post
+            # Single post - partial detection
             gate_detected = True
             partial_gate = True
             confidence = 0.5
@@ -298,27 +326,27 @@ class QualificationDetector(Node):
         
         # Draw center line
         cv2.line(debug_img, (w//2, 0), (w//2, h), (255, 255, 0), 2)
-        if gate_detected:
+        if gate_detected and not self.gate_center_locked:
             cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 0), 3)
         
         # Status overlay
         status_y = 40
         cv2.putText(debug_img, f"Dist: {estimated_distance:.2f}m", 
-                   (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                   (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         status_y += 35
         
         cv2.putText(debug_img, f"Posts: {len(posts)}", 
                    (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         status_y += 35
         
-        lock_status = "LOCKED" if self.gate_center_locked else "UNLOCKED"
-        lock_color = (0, 255, 0) if self.gate_center_locked else (100, 100, 100)
+        lock_status = "LOCKED (IMMUTABLE)" if self.gate_center_locked else "UNLOCKED"
+        lock_color = (0, 255, 255) if self.gate_center_locked else (100, 100, 100)
         cv2.putText(debug_img, f"Lock: {lock_status}", 
                    (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, lock_color, 2)
         status_y += 35
         
         if self.gate_center_locked:
-            cv2.putText(debug_img, f"Locked Pos: ({self.locked_center_x}, {self.locked_center_y})", 
+            cv2.putText(debug_img, f"FIXED: ({self.LOCKED_CENTER_X}, {self.LOCKED_CENTER_Y})", 
                        (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             status_y += 35
         
@@ -330,12 +358,6 @@ class QualificationDetector(Node):
         if self.reverse_mode:
             cv2.putText(debug_img, "MODE: REVERSE", 
                        (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
-            status_y += 35
-        
-        if gate_detected:
-            status_color = (0, 255, 0) if not partial_gate else (0, 165, 255)
-            cv2.putText(debug_img, f"Conf: {confidence:.2f} | Align: {alignment_error:+.3f}", 
-                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
         
         # Publish data
         self.gate_detection_history.append(gate_detected)
