@@ -1,27 +1,40 @@
+# Qualification Mission Parameters - Enhanced Center Detection
+
 qualification_detector_node:
   ros__parameters:
-    # Color detection
+    # Color detection for orange posts
     orange_lower: [0, 20, 40]
     orange_upper: [35, 255, 255]
+    
+    # Detection parameters
     min_area: 300
     publish_debug: true
+    
+    # Gate geometry (SAUVC specs)
+    gate_width_meters: 1.5
+    post_height_meters: 1.4
 
 qualification_navigator_node:
   ros__parameters:
     # Mission parameters
     mission_depth: -0.8
     
+    # Alignment parameters (NEW - for center detection)
+    alignment_threshold: 0.10  # ±10% alignment tolerance
+    alignment_timeout: 15.0     # Max time to spend aligning
+    
     # Passing trigger distance
-    # Lock heading when closer than this (meters)
     passing_trigger_dist: 1.8
     
     # Speeds
     search_speed: 0.4
-    passing_speed: 0.8  # Fast speed for stability during lock
+    passing_speed: 0.8
     
-    # FIXED U-Turn Parameters
-    # Increased speed for proper U-turn with forward motion
-    uturn_speed: 0.5  # CHANGED from 0.12 to 0.5
+    # U-Turn parameters (FIXED for proper turn)
+    uturn_speed: 0.5            # Forward motion during turn
+    uturn_depth_bias: -0.4      # Maintain depth during turn
     
-    # Anti-Surfacing depth bias during U-turn
-    uturn_depth_bias: -0.4  # Keeps depth stable during turn
+    # Gate position and clearance
+    gate_x_position: 0.0
+    auv_length: 0.46
+    clearance_margin: 0.60

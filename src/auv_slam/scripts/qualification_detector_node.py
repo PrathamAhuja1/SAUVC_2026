@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-FIXED Qualification Detector - Always Aims for Gate Center
-Key fixes:
-1. When both posts visible: Use midpoint
-2. When one post visible: Infer center based on gate geometry (1.5m width)
-3. Simplified debug image with only distance and state
-4. Minimal logging
+FINAL FIXED Qualification Gate Detector
+Key Fixes:
+1. NO emergency straight mode
+2. Center lock clears only after clearance
+3. Proper re-locking for reverse pass
 """
 
 import rclpy
@@ -20,38 +19,38 @@ import numpy as np
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
+
 class QualificationDetector(Node):
     def __init__(self):
         super().__init__('qualification_gate_detector')
         self.bridge = CvBridge()
         self.camera_matrix = None
-        self.image_width = 640
-        self.image_height = 480
         
-        # Orange HSV range
+        # Orange HSV range for gate posts
         self.orange_lower = np.array([0, 20, 40])
         self.orange_upper = np.array([35, 255, 255])
         
-        self.min_area = 300
+        self.min_area = 3
         self.gate_detection_history = deque(maxlen=2)
+        self.reverse_mode = False
         
-        # Gate geometry - 1.5m width
-        self.gate_width_meters = 1.5
-        self.gate_half_width = self.gate_width_meters / 2.0  # 0.75m
-        
-        # Position tracking
         self.gate_x_position = 0.0
         self.current_position = None
-        self.reverse_mode = False
-        self.current_state = "UNKNOWN"
         
-        # Camera parameters
-        self.fx = None  # Focal length
+        self.expected_gate_width = 1.5
+        self.gate_width_tolerance = 0.3
         
-        # Smoothing
-        self.center_history = deque(maxlen=3)
+        # Center locking
+        self.gate_center_locked = False
+        self.locked_center_x = None
+        self.locked_center_y = None
+        self.lock_confidence_threshold = 0.8
+        self.lock_distance_threshold = 2.5
+        self.center_lock_enabled = True
         
-        # QoS
+        self.center_history = deque(maxlen=5)
+        self.center_smoothing_alpha = 0.3
+        
         qos_sensor = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -59,208 +58,295 @@ class QualificationDetector(Node):
             durability=DurabilityPolicy.VOLATILE
         )
         
-        # Subscribers
         self.image_sub = self.create_subscription(
             Image, '/camera_forward/image_raw', self.image_callback, qos_sensor)
+        
         self.cam_info_sub = self.create_subscription(
             CameraInfo, '/camera_forward/camera_info', self.cam_info_callback, 10)
+        
+        self.reverse_mode_sub = self.create_subscription(
+            Bool, '/mission/reverse_mode', self.reverse_mode_callback, 10)
+        
+        self.clear_lock_sub = self.create_subscription(
+            Bool, '/mission/clear_center_lock', self.clear_lock_callback, 10)
+        
         self.odom_sub = self.create_subscription(
             Odometry, '/ground_truth/odom', self.odom_callback, 10)
-        self.reverse_mode_sub = self.create_subscription(
-            Bool, '/mission/reverse_mode', self.reverse_cb, 10)
-        self.state_sub = self.create_subscription(
-            String, '/qualification/state', self.state_cb, 10)
-            
+        
         # Publishers
         self.gate_detected_pub = self.create_publisher(Bool, '/qualification/gate_detected', 10)
         self.alignment_pub = self.create_publisher(Float32, '/qualification/alignment_error', 10)
         self.distance_pub = self.create_publisher(Float32, '/qualification/estimated_distance', 10)
+        self.confidence_pub = self.create_publisher(Float32, '/qualification/confidence', 10) 
+        self.partial_gate_pub = self.create_publisher(Bool, '/qualification/partial_detection', 10)
         self.gate_center_pub = self.create_publisher(Point, '/qualification/center_point', 10)
         self.debug_pub = self.create_publisher(Image, '/qualification/debug_image', 10)
+        self.status_pub = self.create_publisher(String, '/qualification/status', 10)
         self.frame_position_pub = self.create_publisher(Float32, '/qualification/frame_position', 10)
         
-        self.get_logger().info('✓ Detector Started')
-
-    def reverse_cb(self, msg): 
+        self.get_logger().info('='*70)
+        self.get_logger().info('✅ FINAL FIXED Qualification Detector')
+        self.get_logger().info('   ✓ NO emergency straight mode')
+        self.get_logger().info('   ✓ Lock clears after clearance only')
+        self.get_logger().info('   ✓ Proper re-locking for reverse')
+        self.get_logger().info('='*70)
+    
+    def reverse_mode_callback(self, msg: Bool):
+        """Handle reverse mode activation"""
+        was_reverse = self.reverse_mode
         self.reverse_mode = msg.data
+        
+        if not was_reverse and msg.data:
+            # Entering reverse mode - clear lock and re-enable
+            self.gate_center_locked = False
+            self.locked_center_x = None
+            self.locked_center_y = None
+            self.center_lock_enabled = True
+            self.center_history.clear()
+            
+            self.get_logger().info('='*70)
+            self.get_logger().info('🔄 REVERSE MODE ACTIVATED')
+            self.get_logger().info('   ✓ Center lock cleared')
+            self.get_logger().info('   ✓ Locking enabled for reverse pass')
+            self.get_logger().info('='*70)
     
-    def state_cb(self, msg):
-        self.current_state = msg.data
+    def clear_lock_callback(self, msg: Bool):
+        """Handle center lock clear signal (after clearance)"""
+        if msg.data:
+            self.gate_center_locked = False
+            self.locked_center_x = None
+            self.locked_center_y = None
+            self.center_lock_enabled = False
+            self.center_history.clear()
+            
+            self.get_logger().info('='*70)
+            self.get_logger().info('🚫 CENTER LOCK CLEARED (After Clearance)')
+            self.get_logger().info('   ⚠️ Locking DISABLED for U-turn')
+            self.get_logger().info('='*70)
     
-    def odom_callback(self, msg):
-        self.current_position = (msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z)
+    def odom_callback(self, msg: Odometry):
+        self.current_position = (
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y,
+            msg.pose.pose.position.z
+        )
     
-    def cam_info_callback(self, msg):
+    def cam_info_callback(self, msg: CameraInfo):
         if self.camera_matrix is None:
             self.camera_matrix = np.array(msg.k).reshape((3, 3))
             self.image_width = msg.width
             self.image_height = msg.height
             self.fx = self.camera_matrix[0, 0]
 
-    def image_callback(self, msg):
-        if self.camera_matrix is None or self.current_position is None: 
+    def image_callback(self, msg: Image):
+        if self.camera_matrix is None or self.current_position is None:
             return
         
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
-        except CvBridgeError: 
+        except CvBridgeError:
             return
         
         debug_img = cv_image.copy()
         h, w = cv_image.shape[:2]
         
-        # Distance Estimation from odometry
-        current_x = self.current_position[0]
-        if not self.reverse_mode: 
-            estimated_distance = abs(self.gate_x_position - current_x)
-        else: 
-            estimated_distance = abs(current_x - self.gate_x_position)
-        
-        # Detect Orange posts
+        # Detect orange posts
         orange_mask = cv2.inRange(hsv_image, self.orange_lower, self.orange_upper)
         kernel = np.ones((5, 5), np.uint8)
-        orange_mask = cv2.dilate(orange_mask, kernel, iterations=2)
+        orange_mask_clean = cv2.dilate(orange_mask, kernel, iterations=3)
         
-        contours, _ = cv2.findContours(orange_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        orange_contours, _ = cv2.findContours(
+            orange_mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        
         posts = []
+        for cnt in orange_contours:
+            area = cv2.contourArea(cnt)
+            if area < self.min_area:
+                continue
+            
+            M = cv2.moments(cnt)
+            if M["m00"] == 0:
+                continue
+            
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            x, y, w_box, h_box = cv2.boundingRect(cnt)
+            
+            posts.append({
+                'center': (cx, cy),
+                'area': area,
+                'bbox': (x, y, w_box, h_box),
+                'x_pos': cx
+            })
         
-        for cnt in contours:
-            if cv2.contourArea(cnt) > self.min_area:
-                M = cv2.moments(cnt)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    x, y, wb, hb = cv2.boundingRect(cnt)
-                    posts.append({'cx': cx, 'cy': cy, 'x': x, 'y': y, 'w': wb, 'h': hb})
-
+        # Estimate distance from odometry
+        current_x = self.current_position[0]
+        if not self.reverse_mode:
+            estimated_distance = abs(self.gate_x_position - current_x)
+        else:
+            estimated_distance = abs(current_x - self.gate_x_position)
+        estimated_distance = max(0.5, min(estimated_distance, 15.0))
+        
         gate_detected = False
-        frame_position = 0.0
+        partial_gate = False
+        alignment_error = 0.0
         gate_center_x = w // 2
         gate_center_y = h // 2
-
-        if len(posts) >= 2:
-            # ============================================================
-            # CASE 1: BOTH POSTS VISIBLE - Use actual midpoint
-            # ============================================================
-            posts.sort(key=lambda p: p['cx'])
+        frame_position = 0.0
+        confidence = 0.0
+        
+        # NO EMERGENCY STRAIGHT MODE - removed completely
+        
+        if self.gate_center_locked:
+            # Use locked center
             gate_detected = True
+            confidence = 1.0
             
-            left_post = posts[0]
-            right_post = posts[1]
-            
-            # Calculate true center
-            raw_center_x = (left_post['cx'] + right_post['cx']) // 2
-            raw_center_y = (left_post['cy'] + right_post['cy']) // 2
-            
-            # Simple smoothing
             if len(self.center_history) > 0:
-                prev = self.center_history[-1]
-                gate_center_x = int(0.4 * raw_center_x + 0.6 * prev[0])
-                gate_center_y = int(0.4 * raw_center_y + 0.6 * prev[1])
+                smoothed_x = int(np.mean([c[0] for c in self.center_history]))
+                smoothed_y = int(np.mean([c[1] for c in self.center_history]))
+                gate_center_x = smoothed_x
+                gate_center_y = smoothed_y
             else:
-                gate_center_x = raw_center_x
-                gate_center_y = raw_center_y
+                gate_center_x = self.locked_center_x
+                gate_center_y = self.locked_center_y
+            
+            frame_position = (gate_center_x - w/2) / (w/2)
+            alignment_error = frame_position
+            
+            cv2.circle(debug_img, (gate_center_x, gate_center_y), 30, (0, 255, 255), -1)
+            cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 255), 5)
+            cv2.putText(debug_img, "CENTER LOCKED", 
+                       (gate_center_x - 120, gate_center_y - 50),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
+        
+        elif len(posts) >= 2:
+            # Two posts detected
+            posts_sorted = sorted(posts, key=lambda p: p['x_pos'])
+            left_post = posts_sorted[0]
+            right_post = posts_sorted[1]
+            
+            detected_center_x = (left_post['center'][0] + right_post['center'][0]) // 2
+            detected_center_y = (left_post['center'][1] + right_post['center'][1]) // 2
+            
+            gate_detected = True
+            partial_gate = False
+            confidence = 1.0
+            
+            # Smooth center
+            if len(self.center_history) > 0:
+                prev_center = self.center_history[-1]
+                gate_center_x = int(self.center_smoothing_alpha * detected_center_x + 
+                                   (1 - self.center_smoothing_alpha) * prev_center[0])
+                gate_center_y = int(self.center_smoothing_alpha * detected_center_y + 
+                                   (1 - self.center_smoothing_alpha) * prev_center[1])
+            else:
+                gate_center_x = detected_center_x
+                gate_center_y = detected_center_y
             
             self.center_history.append((gate_center_x, gate_center_y))
-            frame_position = (gate_center_x - w/2) / (w/2)
             
-            # Visual markers
-            cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 0), 3)
-            cv2.circle(debug_img, (gate_center_x, gate_center_y), 20, (0, 255, 0), -1)
-            cv2.rectangle(debug_img, (left_post['x'], left_post['y']), 
-                         (left_post['x']+left_post['w'], left_post['y']+left_post['h']), 
-                         (0, 255, 0), 2)
-            cv2.rectangle(debug_img, (right_post['x'], right_post['y']), 
-                         (right_post['x']+right_post['w'], right_post['y']+right_post['h']), 
-                         (0, 255, 0), 2)
-
+            # Lock if enabled and close enough
+            if self.center_lock_enabled and not self.gate_center_locked:
+                if estimated_distance < 3.5 and confidence >= 0.9:
+                    self.gate_center_locked = True
+                    self.locked_center_x = gate_center_x
+                    self.locked_center_y = gate_center_y
+                    self.get_logger().info(
+                        f'🔒 CENTER LOCKED at {estimated_distance:.2f}m '
+                        f'(reverse={self.reverse_mode})'
+                    )
+            
+            if self.gate_center_locked:
+                self.locked_center_x = gate_center_x
+                self.locked_center_y = gate_center_y
+            
+            frame_position = (gate_center_x - w/2) / (w/2)
+            alignment_error = frame_position
+            
+            # Draw detections
+            cv2.circle(debug_img, (gate_center_x, gate_center_y), 25, (0, 255, 255), -1)
+            cv2.line(debug_img, left_post['center'], right_post['center'], (0, 255, 0), 3)
+            
+            for post in [left_post, right_post]:
+                x, y, w_b, h_b = post['bbox']
+                cv2.rectangle(debug_img, (x, y), (x+w_b, y+h_b), (255, 0, 255), 3)
+            
+            cv2.putText(debug_img, "FULL GATE", 
+                       (gate_center_x - 80, gate_center_y - 50),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
+        
         elif len(posts) == 1:
-            # ============================================================
-            # CASE 2: ONE POST VISIBLE - Infer center from gate geometry
-            # ============================================================
+            # Single post
             gate_detected = True
+            partial_gate = True
+            confidence = 0.5
+            
             post = posts[0]
-            
-            # Estimate distance to post for pixel-to-meter conversion
-            # Using post height as reference (gate posts are ~1.4m tall)
-            post_height_pixels = post['h']
-            post_height_meters = 1.4
-            
-            if post_height_pixels > 0 and self.fx:
-                # Distance = (RealHeight * FocalLength) / PixelHeight
-                distance_to_post = (post_height_meters * self.fx) / post_height_pixels
-                
-                # Convert gate half-width (0.75m) to pixels at this distance
-                pixels_per_meter = self.fx / distance_to_post
-                gate_half_width_pixels = self.gate_half_width * pixels_per_meter
-                
-                # Determine if this is left or right post
-                post_center_x = post['cx']
-                image_center_x = w / 2
-                
-                if post_center_x < image_center_x:
-                    # LEFT post visible -> gate center is to the RIGHT
-                    inferred_center_x = int(post_center_x + gate_half_width_pixels)
-                else:
-                    # RIGHT post visible -> gate center is to the LEFT
-                    inferred_center_x = int(post_center_x - gate_half_width_pixels)
-                
-                # Clamp to image bounds
-                inferred_center_x = max(0, min(w-1, inferred_center_x))
-                gate_center_x = inferred_center_x
-                gate_center_y = post['cy']
-                
-            else:
-                # Fallback: Simple offset
-                if post['cx'] < w/2:
-                    gate_center_x = post['cx'] + int(w * 0.15)
-                else:
-                    gate_center_x = post['cx'] - int(w * 0.15)
-                gate_center_y = post['cy']
+            gate_center_x = post['center'][0]
+            gate_center_y = post['center'][1]
             
             frame_position = (gate_center_x - w/2) / (w/2)
+            alignment_error = frame_position
             
-            # Visual markers
-            cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (255, 165, 0), 3)
-            cv2.circle(debug_img, (gate_center_x, gate_center_y), 20, (255, 165, 0), -1)
-            cv2.rectangle(debug_img, (post['x'], post['y']), 
-                         (post['x']+post['w'], post['y']+post['h']), 
-                         (255, 165, 0), 2)
-            
-            # Draw arrow to inferred center
-            cv2.arrowedLine(debug_img, (post['cx'], post['cy']), 
-                           (gate_center_x, gate_center_y), (255, 255, 0), 2)
-
-        # ============================================================
-        # SIMPLIFIED DEBUG IMAGE - Only distance and state
-        # ============================================================
+            x, y, w_b, h_b = post['bbox']
+            cv2.rectangle(debug_img, (x, y), (x+w_b, y+h_b), (0, 165, 255), 3)
+            cv2.circle(debug_img, (gate_center_x, gate_center_y), 20, (0, 165, 255), 3)
+            cv2.putText(debug_img, "PARTIAL", 
+                       (gate_center_x - 60, gate_center_y - 40),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+        else:
+            # No posts detected
+            gate_detected = False
+        
         # Draw center line
-        cv2.line(debug_img, (w//2, 0), (w//2, h), (255, 255, 0), 1)
+        cv2.line(debug_img, (w//2, 0), (w//2, h), (255, 255, 0), 2)
+        if gate_detected:
+            cv2.line(debug_img, (gate_center_x, 0), (gate_center_x, h), (0, 255, 0), 3)
         
-        # Simplified status overlay - ONLY distance and state
-        status_lines = [
-            f"Distance: {estimated_distance:.1f}m",
-            f"State: {self.current_state}"
-        ]
+        # Status overlay
+        status_y = 40
+        cv2.putText(debug_img, f"Dist: {estimated_distance:.2f}m", 
+                   (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        status_y += 35
         
-        # Simple status box
-        box_height = len(status_lines) * 40 + 20
-        cv2.rectangle(debug_img, (10, 10), (400, box_height), (0, 0, 0), -1)
-        cv2.rectangle(debug_img, (10, 10), (400, box_height), (0, 255, 0), 2)
+        cv2.putText(debug_img, f"Posts: {len(posts)}", 
+                   (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        status_y += 35
         
-        for i, line in enumerate(status_lines):
-            cv2.putText(debug_img, line, (20, 45 + i*40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+        lock_status = "LOCKED" if self.gate_center_locked else "UNLOCKED"
+        lock_color = (0, 255, 0) if self.gate_center_locked else (100, 100, 100)
+        cv2.putText(debug_img, f"Lock: {lock_status}", 
+                   (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, lock_color, 2)
+        status_y += 35
         
-        # Temporal filtering
+        if not self.center_lock_enabled:
+            cv2.putText(debug_img, "LOCK DISABLED (U-TURN)", 
+                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            status_y += 35
+        
+        if self.reverse_mode:
+            cv2.putText(debug_img, "MODE: REVERSE", 
+                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+            status_y += 35
+        
+        if gate_detected:
+            status_color = (0, 255, 0) if not partial_gate else (0, 165, 255)
+            cv2.putText(debug_img, f"Conf: {confidence:.2f} | Align: {alignment_error:+.3f}", 
+                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+        
+        # Publish data
         self.gate_detection_history.append(gate_detected)
-        confirmed_gate = sum(self.gate_detection_history) >= 1
+        confirmed = sum(self.gate_detection_history) >= 1
         
-        # Publish all data
-        self.gate_detected_pub.publish(Bool(data=confirmed_gate))
-        if confirmed_gate:
-            self.alignment_pub.publish(Float32(data=float(frame_position)))
+        self.gate_detected_pub.publish(Bool(data=confirmed))
+        self.partial_gate_pub.publish(Bool(data=partial_gate))
+        self.confidence_pub.publish(Float32(data=confidence))
+        
+        if confirmed:
+            self.alignment_pub.publish(Float32(data=float(alignment_error)))
             self.distance_pub.publish(Float32(data=float(estimated_distance)))
             self.frame_position_pub.publish(Float32(data=float(frame_position)))
             
@@ -270,18 +356,20 @@ class QualificationDetector(Node):
             center_msg.z = float(estimated_distance)
             self.gate_center_pub.publish(center_msg)
         
-        # Publish debug image
+        # Debug image
         try:
-            debug_msg = self.bridge.cv2_to_imgmsg(debug_img, "bgr8")
-            debug_msg.header = msg.header
-            self.debug_pub.publish(debug_msg)
-        except CvBridgeError:
+            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(debug_img, "bgr8"))
+        except:
             pass
+
 
 def main(args=None):
     rclpy.init(args=args)
-    rclpy.spin(QualificationDetector())
+    node = QualificationDetector()
+    rclpy.spin(node)
+    node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
