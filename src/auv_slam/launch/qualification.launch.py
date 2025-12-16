@@ -132,7 +132,7 @@ def generate_launch_description():
     
     # 8. Qualification Navigator (Compatible with fixed center)
     navigator = TimerAction(
-        period=8.0,
+        period=5.0,
         actions=[
             Node(
                 package='auv_slam',

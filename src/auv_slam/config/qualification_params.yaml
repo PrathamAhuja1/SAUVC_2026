@@ -38,4 +38,4 @@ qualification_navigator_node:
     # Gate width
     gate_width: 1.5
 
-    commit_travel_distance: 4.0
+    commit_travel_distance: 3.51
