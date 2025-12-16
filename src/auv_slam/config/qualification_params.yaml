@@ -1,65 +1,41 @@
-# Qualification Mission Parameters - Geometric Inference + Commit Zone
-
 qualification_detector_node:
   ros__parameters:
-    # Color detection for orange posts
     orange_lower: [0, 20, 40]
     orange_upper: [35, 255, 255]
-    
-    # Detection parameters
     min_area: 300
     publish_debug: true
-    
-    # Gate geometry (SAUVC specs)
     gate_width_meters: 1.5
     post_height_meters: 1.4
-    
-    # Smoothing
     smoothing_alpha: 0.4
 
 qualification_navigator_node:
   ros__parameters:
-    # Mission depth
     mission_depth: -0.8
-    
-    # Search behavior
     search_forward_speed: 0.4
     search_rotation_speed: 0.3
-    
-    # Approach phase (far → 3m)
     approach_speed: 0.6
     approach_stop_distance: 3.0
-    
-    # Alignment phase (at 3m)
     alignment_distance: 3.0
-    alignment_threshold: 0.06    # Must be within ±6%
+    alignment_threshold: 0.06 
     alignment_max_time: 20.0
-    
-    # Final approach (3m → commit zone)
     final_approach_speed: 0.5
     final_approach_threshold: 0.10
-    
-    # NEW: Commit zone (1.2m → 0.6m)
-    commit_distance: 1.2          # Enter commit zone at 1.2m
-    commit_alignment_threshold: 0.10  # Must be aligned to ±10% to enter
-    commit_speed: 0.8             # Speed during commit (fast and straight)
-    
-    # Passing trigger (0.6m → through gate)
-    passing_trigger_distance: 0.6  # Start pure passing at 0.6m
-    passing_speed: 1.0             # Maximum speed through gate
-    
-    # U-Turn parameters
+    commit_distance: 1.2
+    commit_alignment_threshold: 0.10
+    commit_speed: 0.8 
+    passing_trigger_distance: 0.6
+    passing_speed: 1.0
     uturn_forward_speed: 0.3
     uturn_angular_speed: 0.4
     uturn_depth: -0.8
     
-    # Gate position and clearance
+
     gate_x_position: 0.0
     auv_length: 0.46
     
-    # UPDATED: Clearance margin increased to 4.0m to ensure 
-    # bot moves 4m past the gate before U-turn.
     clearance_margin: 4.0         
     
     # Gate width
     gate_width: 1.5
+
+    commit_travel_distance: 4.0

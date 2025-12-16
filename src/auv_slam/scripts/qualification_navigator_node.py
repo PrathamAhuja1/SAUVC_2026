@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-COMMIT ZONE Qualification Navigator
-Works with geometric inference detector
-No center locking - uses commit zone for final approach
+COMMIT ZONE Qualification Navigator - SIMPLIFIED
+Commit state handles all forward movement (4m), then direct U-turn
 """
 
 import rclpy
@@ -18,30 +17,25 @@ class CommitZoneNavigator(Node):
     def __init__(self):
         super().__init__('qualification_navigator')
         
-        # State machine
+        # State machine - SIMPLIFIED (removed PASSING and CLEARING)
         self.SUBMERGING = 0
         self.SEARCHING = 1
         self.APPROACHING = 2
         self.ALIGNING = 3
         self.FINAL_APPROACH = 4
-        self.COMMITTING = 5        # NEW: Commit zone - go straight
-        self.PASSING = 6
-        self.CLEARING = 7
-        self.UTURN = 8
-        self.POST_UTURN_ALIGN = 9
-        self.REVERSE_SEARCHING = 10
-        self.REVERSE_APPROACHING = 11
-        self.REVERSE_ALIGNING = 12
-        self.REVERSE_FINAL_APPROACH = 13
-        self.REVERSE_COMMITTING = 14  # NEW: Reverse commit zone
-        self.REVERSE_PASSING = 15
-        self.REVERSE_CLEARING = 16
-        self.COMPLETED = 17
+        self.COMMITTING = 5           # Handles all forward movement + clearance
+        self.UTURN = 6
+        self.POST_UTURN_ALIGN = 7
+        self.REVERSE_SEARCHING = 8
+        self.REVERSE_APPROACHING = 9
+        self.REVERSE_ALIGNING = 10
+        self.REVERSE_FINAL_APPROACH = 11
+        self.REVERSE_COMMITTING = 12  # Handles all reverse movement + clearance
+        self.COMPLETED = 13
         
         self.state = self.SUBMERGING
         
         # --- DECLARE PARAMETERS ---
-        # Navigation parameters
         self.declare_parameter('search_forward_speed', 0.4)
         self.declare_parameter('approach_speed', 0.6)
         self.declare_parameter('approach_stop_distance', 3.0)
@@ -54,9 +48,7 @@ class CommitZoneNavigator(Node):
         self.declare_parameter('commit_distance', 1.2)
         self.declare_parameter('commit_alignment_threshold', 0.10)
         self.declare_parameter('commit_speed', 0.8)
-        
-        self.declare_parameter('passing_trigger_distance', 0.6)
-        self.declare_parameter('passing_speed', 1.0)
+        self.declare_parameter('commit_travel_distance', 4.0)  # NEW: How far to travel in commit
         
         # U-turn parameters
         self.declare_parameter('uturn_forward_speed', 0.3)
@@ -66,8 +58,6 @@ class CommitZoneNavigator(Node):
         # Gate and geometry parameters
         self.declare_parameter('mission_depth', -0.8)
         self.declare_parameter('gate_x_position', 0.0)
-        self.declare_parameter('auv_length', 0.46)
-        self.declare_parameter('clearance_margin', 4.0) # Default updated to 4.0
         
         # --- GET PARAMETERS ---
         self.search_forward_speed = self.get_parameter('search_forward_speed').value
@@ -81,24 +71,14 @@ class CommitZoneNavigator(Node):
         self.commit_distance = self.get_parameter('commit_distance').value
         self.commit_alignment_threshold = self.get_parameter('commit_alignment_threshold').value
         self.commit_speed = self.get_parameter('commit_speed').value
-        
-        self.passing_trigger_distance = self.get_parameter('passing_trigger_distance').value
-        self.passing_speed = self.get_parameter('passing_speed').value
+        self.commit_travel_distance = self.get_parameter('commit_travel_distance').value
         
         self.uturn_forward_speed = self.get_parameter('uturn_forward_speed').value
         self.uturn_angular_speed = self.get_parameter('uturn_angular_speed').value
         self.uturn_depth = self.get_parameter('uturn_depth').value
 
-        # Geometry & Mission
         self.mission_depth = self.get_parameter('mission_depth').value
         self.gate_x_position = self.get_parameter('gate_x_position').value
-        self.auv_length = self.get_parameter('auv_length').value
-        self.clearance_margin = self.get_parameter('clearance_margin').value
-        
-        # Calculate clearance targets based on parameters
-        # This ensures we move clearance_margin distance past the gate
-        self.forward_clearance_x = self.gate_x_position + self.auv_length + self.clearance_margin
-        self.reverse_clearance_x = self.gate_x_position - self.auv_length - self.clearance_margin
         
         self.gate_width = 1.5
         
@@ -113,12 +93,14 @@ class CommitZoneNavigator(Node):
         self.current_position = None
         self.current_yaw = 0.0
         
-        self.passing_start_position = None
+        # NEW: Track commit start position
+        self.commit_start_position = None
+        self.commit_start_x = 0.0
+        
         self.alignment_start_time = 0.0
         self.state_start_time = time.time()
         self.uturn_start_yaw = 0.0
         self.uturn_start_time = 0.0
-        self.uturn_start_x = 0.0
         self.reverse_mode = False
         
         self.first_pass_complete = False
@@ -145,13 +127,11 @@ class CommitZoneNavigator(Node):
         self.create_timer(0.05, self.control_loop)
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ COMMIT ZONE QUALIFICATION NAVIGATOR (UPDATED)')
+        self.get_logger().info('✅ SIMPLIFIED COMMIT ZONE NAVIGATOR')
         self.get_logger().info('='*70)
-        self.get_logger().info('   ✓ No center locking')
-        self.get_logger().info('   ✓ Geometric inference detection')
-        self.get_logger().info(f'   ✓ Commit zone at {self.commit_distance}m')
-        self.get_logger().info(f'   ✓ Clearance margin: {self.clearance_margin}m')
-        self.get_logger().info(f'   ✓ Forward clearance target X: {self.forward_clearance_x:.2f}m')
+        self.get_logger().info('   ✓ Commit handles all forward movement (4m)')
+        self.get_logger().info('   ✓ Direct transition: COMMIT → UTURN')
+        self.get_logger().info('   ✓ No separate PASSING/CLEARING states')
         self.get_logger().info('='*70)
     
     def gate_cb(self, msg: Bool):
@@ -189,8 +169,7 @@ class CommitZoneNavigator(Node):
         cmd = Twist()
         
         # Depth control
-        if self.state == self.PASSING or self.state == self.REVERSE_PASSING or \
-           self.state == self.COMMITTING or self.state == self.REVERSE_COMMITTING:
+        if self.state == self.COMMITTING or self.state == self.REVERSE_COMMITTING:
             cmd.linear.z = self.gentle_depth_control(self.mission_depth)
         elif self.state == self.UTURN:
             pass  # U-turn handles its own depth
@@ -210,10 +189,6 @@ class CommitZoneNavigator(Node):
             cmd = self.final_approach(cmd)
         elif self.state == self.COMMITTING:
             cmd = self.committing(cmd)
-        elif self.state == self.PASSING:
-            cmd = self.passing(cmd)
-        elif self.state == self.CLEARING:
-            cmd = self.clearing(cmd)
         elif self.state == self.UTURN:
             cmd = self.uturn(cmd)
         elif self.state == self.POST_UTURN_ALIGN:
@@ -228,10 +203,6 @@ class CommitZoneNavigator(Node):
             cmd = self.final_approach(cmd)
         elif self.state == self.REVERSE_COMMITTING:
             cmd = self.committing(cmd)
-        elif self.state == self.REVERSE_PASSING:
-            cmd = self.passing(cmd)
-        elif self.state == self.REVERSE_CLEARING:
-            cmd = self.reverse_clearing(cmd)
         elif self.state == self.COMPLETED:
             cmd = self.completed(cmd)
         
@@ -256,7 +227,7 @@ class CommitZoneNavigator(Node):
         return max(-0.6, min(z_cmd, 0.6))
     
     def gentle_depth_control(self, target_depth: float) -> float:
-        """Gentle depth control during passage/commit"""
+        """Gentle depth control during commit"""
         depth_error = target_depth - self.current_depth
         deadband = 0.25
         
@@ -327,7 +298,7 @@ class CommitZoneNavigator(Node):
             return cmd
         
         is_aligned = abs(self.frame_position) < self.alignment_threshold
-        has_confidence = self.confidence > 0.8 or self.partial_gate  # Accept partial
+        has_confidence = self.confidence > 0.8 or self.partial_gate
         
         if is_aligned and has_confidence:
             self.get_logger().info(f'✅ ALIGNED ({elapsed:.1f}s)')
@@ -354,12 +325,10 @@ class CommitZoneNavigator(Node):
     def final_approach(self, cmd: Twist) -> Twist:
         """Approach from 3m to commit distance (1.2m)"""
         
-        # Check if reached commit distance
         if self.estimated_distance <= self.commit_distance:
             if abs(self.frame_position) < self.commit_alignment_threshold:
                 self.get_logger().info(
-                    f'🎯 ENTERING COMMIT ZONE at {self.estimated_distance:.2f}m '
-                    f'(aligned: {self.frame_position:+.3f})'
+                    f'🎯 ENTERING COMMIT ZONE at {self.estimated_distance:.2f}m'
                 )
                 if self.reverse_mode:
                     self.transition_to(self.REVERSE_COMMITTING)
@@ -367,7 +336,6 @@ class CommitZoneNavigator(Node):
                     self.transition_to(self.COMMITTING)
                 return cmd
             else:
-                # Too misaligned - emergency correction
                 self.get_logger().warn(
                     f'⚠️ At commit point but misaligned ({self.frame_position:+.3f})!'
                 )
@@ -375,7 +343,6 @@ class CommitZoneNavigator(Node):
                 cmd.angular.z = -self.frame_position * 4.0
                 return cmd
         
-        # Normal final approach
         if abs(self.frame_position) > 0.10:
             cmd.linear.x = self.final_approach_speed * 0.6
             cmd.angular.z = -self.frame_position * 3.0
@@ -387,99 +354,66 @@ class CommitZoneNavigator(Node):
     
     def committing(self, cmd: Twist) -> Twist:
         """
-        COMMIT ZONE: Go straight with minimal corrections
-        From 1.2m to passing trigger (0.6m)
+        COMMIT: Move forward 4m straight through gate and past it
+        Then transition directly to U-turn
         """
         
-        # Check if reached passing trigger
-        if self.estimated_distance <= self.passing_trigger_distance:
-            self.get_logger().info(
-                f'🚀 PASSING TRIGGER at {self.estimated_distance:.2f}m'
-            )
-            self.passing_start_position = self.current_position
-            if self.reverse_mode:
-                self.transition_to(self.REVERSE_PASSING)
-            else:
-                self.transition_to(self.PASSING)
-            return cmd
-        
-        # COMMIT: Mostly straight with very gentle corrections
-        cmd.linear.x = self.commit_speed
-        
-        # Only apply corrections if:
-        # 1. Gate is detected
-        # 2. Alignment error is significant (>15%)
-        # 3. We're not too close (>0.8m)
-        
-        if self.gate_detected and abs(self.frame_position) > 0.15 and self.estimated_distance > 0.8:
-            # Gentle correction
-            cmd.angular.z = -self.frame_position * 0.8
-            self.get_logger().info(
-                f'🎯 COMMIT (correcting): dist={self.estimated_distance:.2f}m, '
-                f'pos={self.frame_position:+.3f}',
-                throttle_duration_sec=0.5
-            )
-        else:
-            # Pure straight
-            cmd.angular.z = 0.0
-            self.get_logger().info(
-                f'➡️ COMMIT (straight): dist={self.estimated_distance:.2f}m',
-                throttle_duration_sec=0.5
-            )
-        
-        return cmd
-    
-    def passing(self, cmd: Twist) -> Twist:
-        """Full passage - pure forward thrust"""
-        if self.passing_start_position is None:
-            self.passing_start_position = self.current_position
+        # Initialize starting position on first entry
+        if self.commit_start_position is None:
+            self.commit_start_position = self.current_position
+            if self.current_position:
+                self.commit_start_x = self.current_position[0]
+            
             direction = "REVERSE" if self.reverse_mode else "FORWARD"
-            self.get_logger().info(f'🚀 {direction} PASSAGE STARTED')
+            self.get_logger().info(f'🚀 {direction} COMMIT STARTED - Moving {self.commit_travel_distance}m')
         
-        if self.current_position:
-            current_x = self.current_position[0]
-            
+        # Calculate distance traveled
+        if self.current_position and self.commit_start_position:
             if not self.reverse_mode:
-                auv_back_x = current_x - self.auv_length
-                back_passed = auv_back_x > self.gate_x_position
+                # Forward: positive X direction
+                distance_traveled = self.current_position[0] - self.commit_start_x
             else:
-                auv_back_x = current_x + self.auv_length
-                back_passed = auv_back_x < self.gate_x_position
+                # Reverse: negative X direction
+                distance_traveled = self.commit_start_x - self.current_position[0]
             
-            if back_passed:
-                self.get_logger().info('✅ AUV BACK PASSED GATE → CLEARING')
+            # Check if we've traveled 4m
+            if distance_traveled >= self.commit_travel_distance:
+                self.get_logger().info('='*70)
+                self.get_logger().info(f'✅ COMMIT COMPLETE! Traveled {distance_traveled:.2f}m')
+                self.get_logger().info('   → Starting U-turn')
+                self.get_logger().info('='*70)
+                
+                # Reset for next commit
+                self.commit_start_position = None
+                self.commit_start_x = 0.0
                 
                 if not self.reverse_mode:
                     self.first_pass_complete = True
-                    self.transition_to(self.CLEARING)
+                    self.transition_to(self.UTURN)
                 else:
                     self.second_pass_complete = True
-                    self.transition_to(self.REVERSE_CLEARING)
-                return cmd
-        
-        # Pure forward during passing
-        cmd.linear.x = self.passing_speed
-        cmd.angular.z = 0.0
-        return cmd
-    
-    def clearing(self, cmd: Twist) -> Twist:
-        """Forward clearance - moves 4m past gate if clearance_margin is 4.0"""
-        if self.current_position:
-            current_x = self.current_position[0]
-            
-            if current_x >= self.forward_clearance_x:
-                self.get_logger().info('✅ CLEARANCE COMPLETE → U-TURN')
-                self.uturn_start_time = 0.0
-                self.transition_to(self.UTURN)
+                    self.transition_to(self.COMPLETED)
                 return cmd
             
-            distance_needed = self.forward_clearance_x - current_x
+            # Show progress
+            remaining = self.commit_travel_distance - distance_traveled
+            progress_pct = (distance_traveled / self.commit_travel_distance) * 100
+            
             self.get_logger().info(
-                f'🏃 CLEARING: need {distance_needed:.2f}m more',
-                throttle_duration_sec=0.4
+                f'🚀 COMMIT: {distance_traveled:.2f}m / {self.commit_travel_distance:.2f}m '
+                f'({progress_pct:.0f}%) - {remaining:.2f}m remaining',
+                throttle_duration_sec=0.5
             )
         
-        cmd.linear.x = 0.8
+        # Pure forward movement - minimal corrections
+        cmd.linear.x = self.commit_speed
+        
+        # Only apply gentle corrections if significantly off-center and gate still visible
+        if self.gate_detected and abs(self.frame_position) > 0.20:
+            cmd.angular.z = -self.frame_position * 0.5
+        else:
+            cmd.angular.z = 0.0
+        
         return cmd
     
     def uturn(self, cmd: Twist) -> Twist:
@@ -488,7 +422,6 @@ class CommitZoneNavigator(Node):
         if self.uturn_start_time == 0.0:
             self.uturn_start_yaw = self.current_yaw
             self.uturn_start_time = time.time()
-            self.uturn_start_x = self.current_position[0] if self.current_position else 0.0
             self.get_logger().info('🔄 STARTING U-TURN')
         
         angle_turned = abs(self.normalize_angle(self.current_yaw - self.uturn_start_yaw))
@@ -533,27 +466,6 @@ class CommitZoneNavigator(Node):
             cmd.linear.x = 0.3
             cmd.angular.z = 0.2
         
-        return cmd
-    
-    def reverse_clearing(self, cmd: Twist) -> Twist:
-        """Reverse clearance - moves past gate by margin"""
-        if self.current_position:
-            current_x = self.current_position[0]
-            
-            if current_x <= self.reverse_clearance_x:
-                self.get_logger().info('='*70)
-                self.get_logger().info('🎉 QUALIFICATION COMPLETE!')
-                self.get_logger().info('='*70)
-                self.transition_to(self.COMPLETED)
-                return cmd
-            
-            distance_needed = current_x - self.reverse_clearance_x
-            self.get_logger().info(
-                f'🏃 REVERSE CLEARING: need {distance_needed:.2f}m',
-                throttle_duration_sec=0.4
-            )
-        
-        cmd.linear.x = 0.8
         return cmd
     
     def completed(self, cmd: Twist) -> Twist:
@@ -611,8 +523,6 @@ class CommitZoneNavigator(Node):
             self.ALIGNING: 'ALIGNING',
             self.FINAL_APPROACH: 'FINAL_APPROACH',
             self.COMMITTING: 'COMMITTING',
-            self.PASSING: 'PASSING',
-            self.CLEARING: 'CLEARING',
             self.UTURN: 'UTURN',
             self.POST_UTURN_ALIGN: 'POST_UTURN_ALIGN',
             self.REVERSE_SEARCHING: 'REVERSE_SEARCHING',
@@ -620,8 +530,6 @@ class CommitZoneNavigator(Node):
             self.REVERSE_ALIGNING: 'REVERSE_ALIGNING',
             self.REVERSE_FINAL_APPROACH: 'REVERSE_FINAL_APPROACH',
             self.REVERSE_COMMITTING: 'REVERSE_COMMITTING',
-            self.REVERSE_PASSING: 'REVERSE_PASSING',
-            self.REVERSE_CLEARING: 'REVERSE_CLEARING',
             self.COMPLETED: 'COMPLETED',
         }
         return names.get(self.state, 'UNKNOWN')
