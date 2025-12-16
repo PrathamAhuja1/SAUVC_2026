@@ -126,13 +126,7 @@ class CommitZoneNavigator(Node):
         
         self.create_timer(0.05, self.control_loop)
         
-        self.get_logger().info('='*70)
-        self.get_logger().info('✅ SIMPLIFIED COMMIT ZONE NAVIGATOR')
-        self.get_logger().info('='*70)
-        self.get_logger().info('   ✓ Commit handles all forward movement (4m)')
-        self.get_logger().info('   ✓ Direct transition: COMMIT → UTURN')
-        self.get_logger().info('   ✓ No separate PASSING/CLEARING states')
-        self.get_logger().info('='*70)
+
     
     def gate_cb(self, msg: Bool):
         self.gate_detected = msg.data
@@ -379,7 +373,6 @@ class CommitZoneNavigator(Node):
             # Check if we've traveled 4m
             if distance_traveled >= self.commit_travel_distance:
                 self.get_logger().info('='*70)
-                self.get_logger().info(f'✅ COMMIT COMPLETE! Traveled {distance_traveled:.2f}m')
                 self.get_logger().info('   → Starting U-turn')
                 self.get_logger().info('='*70)
                 
@@ -479,14 +472,8 @@ class CommitZoneNavigator(Node):
             
             self.get_logger().info('='*70)
             self.get_logger().info('🏆 QUALIFICATION COMPLETE!')
-            self.get_logger().info(f'   Pass 1: {"✅" if self.first_pass_complete else "❌"}')
-            self.get_logger().info(f'   Pass 2: {"✅" if self.second_pass_complete else "❌"}')
+
             self.get_logger().info(f'   Total time: {total_time:.1f}s')
-            
-            if self.first_pass_complete and self.second_pass_complete:
-                self.get_logger().info('   🏆 POINTS: 2 - QUALIFIED FOR FINALS!')
-            elif self.first_pass_complete:
-                self.get_logger().info('   ⚠️ POINTS: 1')
             
             self.get_logger().info('='*70)
             self._completion_reported = True

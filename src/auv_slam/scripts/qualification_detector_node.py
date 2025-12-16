@@ -74,12 +74,6 @@ class GeometricGateDetector(Node):
         self.status_pub = self.create_publisher(String, '/qualification/status', 10)
         self.frame_position_pub = self.create_publisher(Float32, '/qualification/frame_position', 10)
         
-        self.get_logger().info('='*70)
-        self.get_logger().info('✅ GEOMETRIC INFERENCE Gate Detector')
-        self.get_logger().info('   ✓ No center locking')
-        self.get_logger().info('   ✓ Continuous geometric inference')
-        self.get_logger().info('   ✓ Works when very close to gate')
-        self.get_logger().info('='*70)
     
     def reverse_mode_callback(self, msg: Bool):
         self.reverse_mode = msg.data
