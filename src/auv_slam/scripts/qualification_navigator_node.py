@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """
-FINAL FIXED Qualification Navigator
-Key Fixes:
-1. 0.55m clearance (as per rules)
-2. Center lock clears AFTER clearance (not during U-turn start)
-3. Improved U-turn depth control (stays submerged)
-4. No emergency straight mode
+COMMIT ZONE Qualification Navigator
+Works with geometric inference detector
+No center locking - uses commit zone for final approach
 """
 
 import rclpy
@@ -17,7 +14,7 @@ import time
 import math
 
 
-class QualificationNavigator(Node):
+class CommitZoneNavigator(Node):
     def __init__(self):
         super().__init__('qualification_navigator')
         
@@ -27,30 +24,32 @@ class QualificationNavigator(Node):
         self.APPROACHING = 2
         self.ALIGNING = 3
         self.FINAL_APPROACH = 4
-        self.PASSING = 5
-        self.CLEARING = 6
-        self.UTURN = 7
-        self.POST_UTURN_ALIGN = 8
-        self.REVERSE_SEARCHING = 9
-        self.REVERSE_APPROACHING = 10
-        self.REVERSE_ALIGNING = 11
-        self.REVERSE_FINAL_APPROACH = 12
-        self.REVERSE_PASSING = 13
-        self.REVERSE_CLEARING = 14
-        self.COMPLETED = 15
+        self.COMMITTING = 5        # NEW: Commit zone - go straight
+        self.PASSING = 6
+        self.CLEARING = 7
+        self.UTURN = 8
+        self.POST_UTURN_ALIGN = 9
+        self.REVERSE_SEARCHING = 10
+        self.REVERSE_APPROACHING = 11
+        self.REVERSE_ALIGNING = 12
+        self.REVERSE_FINAL_APPROACH = 13
+        self.REVERSE_COMMITTING = 14  # NEW: Reverse commit zone
+        self.REVERSE_PASSING = 15
+        self.REVERSE_CLEARING = 16
+        self.COMPLETED = 17
         
         self.state = self.SUBMERGING
         
-        # CRITICAL: 0.55m clearance as per SAUVC rules
+        # Gate and clearance parameters (SAUVC rules: 0.55m clearance)
         self.gate_x_position = 0.0
         self.mission_depth = -0.8
         self.auv_length = 0.46
-        self.clearance_margin = 0.36  # SAUVC requirement
+        self.clearance_margin = 0.36
         
         self.forward_clearance_x = self.gate_x_position + self.auv_length + self.clearance_margin
         self.reverse_clearance_x = self.gate_x_position - self.auv_length - self.clearance_margin
         
-        # Parameters
+        # Navigation parameters
         self.declare_parameter('search_forward_speed', 0.4)
         self.declare_parameter('approach_speed', 0.6)
         self.declare_parameter('approach_stop_distance', 3.0)
@@ -58,14 +57,21 @@ class QualificationNavigator(Node):
         self.declare_parameter('alignment_threshold', 0.06)
         self.declare_parameter('alignment_max_time', 20.0)
         self.declare_parameter('final_approach_speed', 0.5)
-        self.declare_parameter('passing_trigger_distance', 1.0)
+        
+        # NEW: Commit zone parameters
+        self.declare_parameter('commit_distance', 1.2)        # Start commit at 1.2m
+        self.declare_parameter('commit_alignment_threshold', 0.10)  # Must be within ±10%
+        self.declare_parameter('commit_speed', 0.8)           # Speed during commit
+        
+        self.declare_parameter('passing_trigger_distance', 0.6)  # Was 1.0, now 0.6
         self.declare_parameter('passing_speed', 1.0)
         
-        # U-turn parameters - OPTIMIZED for depth control
-        self.declare_parameter('uturn_forward_speed', 0.3)  # Reduced for stability
-        self.declare_parameter('uturn_angular_speed', 0.4)  # Reduced for stability
+        # U-turn parameters
+        self.declare_parameter('uturn_forward_speed', 0.3)
+        self.declare_parameter('uturn_angular_speed', 0.4)
         self.declare_parameter('uturn_depth', -0.8)
         
+        # Get parameters
         self.search_forward_speed = self.get_parameter('search_forward_speed').value
         self.approach_speed = self.get_parameter('approach_speed').value
         self.approach_stop_distance = self.get_parameter('approach_stop_distance').value
@@ -73,15 +79,22 @@ class QualificationNavigator(Node):
         self.alignment_threshold = self.get_parameter('alignment_threshold').value
         self.alignment_max_time = self.get_parameter('alignment_max_time').value
         self.final_approach_speed = self.get_parameter('final_approach_speed').value
+        
+        self.commit_distance = self.get_parameter('commit_distance').value
+        self.commit_alignment_threshold = self.get_parameter('commit_alignment_threshold').value
+        self.commit_speed = self.get_parameter('commit_speed').value
+        
         self.passing_trigger_distance = self.get_parameter('passing_trigger_distance').value
         self.passing_speed = self.get_parameter('passing_speed').value
         self.gate_width = 1.5
+        
         self.uturn_forward_speed = self.get_parameter('uturn_forward_speed').value
         self.uturn_angular_speed = self.get_parameter('uturn_angular_speed').value
         self.uturn_depth = self.get_parameter('uturn_depth').value
         
         # State variables
         self.gate_detected = False
+        self.partial_gate = False
         self.alignment_error = 0.0
         self.estimated_distance = 999.0
         self.frame_position = 0.0
@@ -111,25 +124,23 @@ class QualificationNavigator(Node):
         self.create_subscription(Float32, '/qualification/estimated_distance', self.dist_cb, 10)
         self.create_subscription(Float32, '/qualification/frame_position', self.frame_pos_cb, 10)
         self.create_subscription(Float32, '/qualification/confidence', self.conf_cb, 10)
+        self.create_subscription(Bool, '/qualification/partial_detection', self.partial_cb, 10)
         self.create_subscription(Odometry, '/ground_truth/odom', self.odom_cb, 10)
         
         # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
         self.state_pub = self.create_publisher(String, '/qualification/state', 10)
         self.reverse_mode_pub = self.create_publisher(Bool, '/mission/reverse_mode', 10)
-        self.clear_center_lock_pub = self.create_publisher(Bool, '/mission/clear_center_lock', 10)
         
         self.create_timer(0.05, self.control_loop)
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ FINAL FIXED QUALIFICATION NAVIGATOR')
+        self.get_logger().info('✅ COMMIT ZONE QUALIFICATION NAVIGATOR')
         self.get_logger().info('='*70)
-        self.get_logger().info('   ✓ 0.55m clearance (SAUVC compliant)')
-        self.get_logger().info('   ✓ Center lock clears AFTER clearance')
-        self.get_logger().info('   ✓ Improved U-turn depth control')
-        self.get_logger().info('   ✓ Bot stays submerged throughout')
-        self.get_logger().info(f'   Forward clearance: X > {self.forward_clearance_x:.2f}m')
-        self.get_logger().info(f'   Reverse clearance: X < {self.reverse_clearance_x:.2f}m')
+        self.get_logger().info('   ✓ No center locking')
+        self.get_logger().info('   ✓ Geometric inference detection')
+        self.get_logger().info(f'   ✓ Commit zone at {self.commit_distance}m')
+        self.get_logger().info(f'   ✓ 0.55m clearance (SAUVC compliant)')
         self.get_logger().info('='*70)
     
     def gate_cb(self, msg: Bool):
@@ -147,6 +158,9 @@ class QualificationNavigator(Node):
     def conf_cb(self, msg: Float32):
         self.confidence = msg.data
     
+    def partial_cb(self, msg: Bool):
+        self.partial_gate = msg.data
+    
     def odom_cb(self, msg: Odometry):
         self.current_depth = msg.pose.pose.position.z
         self.current_position = (
@@ -163,12 +177,12 @@ class QualificationNavigator(Node):
     def control_loop(self):
         cmd = Twist()
         
-        # Depth control based on state
-        if self.state == self.PASSING or self.state == self.REVERSE_PASSING:
+        # Depth control
+        if self.state == self.PASSING or self.state == self.REVERSE_PASSING or \
+           self.state == self.COMMITTING or self.state == self.REVERSE_COMMITTING:
             cmd.linear.z = self.gentle_depth_control(self.mission_depth)
         elif self.state == self.UTURN:
-            # U-turn has its own depth control (don't set here)
-            pass
+            pass  # U-turn handles its own depth
         else:
             cmd.linear.z = self.depth_control(self.mission_depth)
         
@@ -183,6 +197,8 @@ class QualificationNavigator(Node):
             cmd = self.aligning(cmd)
         elif self.state == self.FINAL_APPROACH:
             cmd = self.final_approach(cmd)
+        elif self.state == self.COMMITTING:
+            cmd = self.committing(cmd)
         elif self.state == self.PASSING:
             cmd = self.passing(cmd)
         elif self.state == self.CLEARING:
@@ -199,6 +215,8 @@ class QualificationNavigator(Node):
             cmd = self.aligning(cmd)
         elif self.state == self.REVERSE_FINAL_APPROACH:
             cmd = self.final_approach(cmd)
+        elif self.state == self.REVERSE_COMMITTING:
+            cmd = self.committing(cmd)
         elif self.state == self.REVERSE_PASSING:
             cmd = self.passing(cmd)
         elif self.state == self.REVERSE_CLEARING:
@@ -227,7 +245,7 @@ class QualificationNavigator(Node):
         return max(-0.6, min(z_cmd, 0.6))
     
     def gentle_depth_control(self, target_depth: float) -> float:
-        """Gentle depth control during passage"""
+        """Gentle depth control during passage/commit"""
         depth_error = target_depth - self.current_depth
         deadband = 0.25
         
@@ -298,7 +316,7 @@ class QualificationNavigator(Node):
             return cmd
         
         is_aligned = abs(self.frame_position) < self.alignment_threshold
-        has_confidence = self.confidence > 0.8
+        has_confidence = self.confidence > 0.8 or self.partial_gate  # Accept partial
         
         if is_aligned and has_confidence:
             self.get_logger().info(f'✅ ALIGNED ({elapsed:.1f}s)')
@@ -323,20 +341,30 @@ class QualificationNavigator(Node):
         return cmd
     
     def final_approach(self, cmd: Twist) -> Twist:
-        if self.estimated_distance <= self.passing_trigger_distance:
-            if abs(self.frame_position) < 0.15:
-                self.get_logger().info(f'🚀 COMMITTING TO PASSAGE')
-                self.passing_start_position = self.current_position
+        """Approach from 3m to commit distance (1.2m)"""
+        
+        # Check if reached commit distance
+        if self.estimated_distance <= self.commit_distance:
+            if abs(self.frame_position) < self.commit_alignment_threshold:
+                self.get_logger().info(
+                    f'🎯 ENTERING COMMIT ZONE at {self.estimated_distance:.2f}m '
+                    f'(aligned: {self.frame_position:+.3f})'
+                )
                 if self.reverse_mode:
-                    self.transition_to(self.REVERSE_PASSING)
+                    self.transition_to(self.REVERSE_COMMITTING)
                 else:
-                    self.transition_to(self.PASSING)
+                    self.transition_to(self.COMMITTING)
                 return cmd
             else:
-                cmd.linear.x = 0.0
+                # Too misaligned - emergency correction
+                self.get_logger().warn(
+                    f'⚠️ At commit point but misaligned ({self.frame_position:+.3f})!'
+                )
+                cmd.linear.x = 0.1
                 cmd.angular.z = -self.frame_position * 4.0
                 return cmd
         
+        # Normal final approach
         if abs(self.frame_position) > 0.10:
             cmd.linear.x = self.final_approach_speed * 0.6
             cmd.angular.z = -self.frame_position * 3.0
@@ -346,7 +374,52 @@ class QualificationNavigator(Node):
         
         return cmd
     
+    def committing(self, cmd: Twist) -> Twist:
+        """
+        COMMIT ZONE: Go straight with minimal corrections
+        From 1.2m to passing trigger (0.6m)
+        """
+        
+        # Check if reached passing trigger
+        if self.estimated_distance <= self.passing_trigger_distance:
+            self.get_logger().info(
+                f'🚀 PASSING TRIGGER at {self.estimated_distance:.2f}m'
+            )
+            self.passing_start_position = self.current_position
+            if self.reverse_mode:
+                self.transition_to(self.REVERSE_PASSING)
+            else:
+                self.transition_to(self.PASSING)
+            return cmd
+        
+        # COMMIT: Mostly straight with very gentle corrections
+        cmd.linear.x = self.commit_speed
+        
+        # Only apply corrections if:
+        # 1. Gate is detected
+        # 2. Alignment error is significant (>15%)
+        # 3. We're not too close (>0.8m)
+        
+        if self.gate_detected and abs(self.frame_position) > 0.15 and self.estimated_distance > 0.8:
+            # Gentle correction
+            cmd.angular.z = -self.frame_position * 0.8
+            self.get_logger().info(
+                f'🎯 COMMIT (correcting): dist={self.estimated_distance:.2f}m, '
+                f'pos={self.frame_position:+.3f}',
+                throttle_duration_sec=0.5
+            )
+        else:
+            # Pure straight
+            cmd.angular.z = 0.0
+            self.get_logger().info(
+                f'➡️ COMMIT (straight): dist={self.estimated_distance:.2f}m',
+                throttle_duration_sec=0.5
+            )
+        
+        return cmd
+    
     def passing(self, cmd: Twist) -> Twist:
+        """Full passage - pure forward thrust"""
         if self.passing_start_position is None:
             self.passing_start_position = self.current_position
             direction = "REVERSE" if self.reverse_mode else "FORWARD"
@@ -363,10 +436,7 @@ class QualificationNavigator(Node):
                 back_passed = auv_back_x < self.gate_x_position
             
             if back_passed:
-                self.get_logger().info('='*70)
-                self.get_logger().info(f'✅ AUV BACK PASSED GATE!')
-                self.get_logger().info(f'   → Entering CLEARING (0.55m more)')
-                self.get_logger().info('='*70)
+                self.get_logger().info('✅ AUV BACK PASSED GATE → CLEARING')
                 
                 if not self.reverse_mode:
                     self.first_pass_complete = True
@@ -376,32 +446,25 @@ class QualificationNavigator(Node):
                     self.transition_to(self.REVERSE_CLEARING)
                 return cmd
         
+        # Pure forward during passing
         cmd.linear.x = self.passing_speed
         cmd.angular.z = 0.0
         return cmd
     
     def clearing(self, cmd: Twist) -> Twist:
-        """Travel 0.55m after back passes gate"""
+        """Forward clearance - 0.55m past gate"""
         if self.current_position:
             current_x = self.current_position[0]
             
             if current_x >= self.forward_clearance_x:
-                self.get_logger().info('='*70)
-                self.get_logger().info('✅ CLEARANCE COMPLETE (0.55m)')
-                self.get_logger().info('   → Clearing center lock')
-                self.get_logger().info('   → Starting U-TURN')
-                self.get_logger().info('='*70)
-                
-                # CRITICAL: Clear center lock AFTER clearance
-                self.clear_center_lock_pub.publish(Bool(data=True))
-                
+                self.get_logger().info('✅ CLEARANCE COMPLETE → U-TURN')
                 self.uturn_start_time = 0.0
                 self.transition_to(self.UTURN)
                 return cmd
             
             distance_needed = self.forward_clearance_x - current_x
             self.get_logger().info(
-                f'🏃 CLEARING: X={current_x:.2f}m, need {distance_needed:.2f}m more',
+                f'🏃 CLEARING: need {distance_needed:.2f}m more',
                 throttle_duration_sec=0.4
             )
         
@@ -409,69 +472,38 @@ class QualificationNavigator(Node):
         return cmd
     
     def uturn(self, cmd: Twist) -> Twist:
-        """IMPROVED U-turn with strong depth control"""
+        """U-turn with depth control"""
         
         if self.uturn_start_time == 0.0:
             self.uturn_start_yaw = self.current_yaw
             self.uturn_start_time = time.time()
             self.uturn_start_x = self.current_position[0] if self.current_position else 0.0
-            
-            self.get_logger().info('='*70)
             self.get_logger().info('🔄 STARTING U-TURN')
-            self.get_logger().info(f'   Starting yaw: {math.degrees(self.uturn_start_yaw):.1f}°')
-            self.get_logger().info(f'   Starting depth: {self.current_depth:.2f}m')
-            self.get_logger().info('='*70)
         
         angle_turned = abs(self.normalize_angle(self.current_yaw - self.uturn_start_yaw))
-        elapsed = time.time() - self.uturn_start_time
         
         if angle_turned > (math.pi - 0.17):
-            turn_distance = abs(self.current_position[0] - self.uturn_start_x) if self.current_position else 0
-            
-            self.get_logger().info('='*70)
-            self.get_logger().info(f'✅ U-TURN COMPLETE ({elapsed:.1f}s)')
-            self.get_logger().info(f'   Final depth: {self.current_depth:.2f}m')
-            self.get_logger().info('   → Aligning for reverse pass')
-            self.get_logger().info('='*70)
-            
+            self.get_logger().info('✅ U-TURN COMPLETE → POST-ALIGN')
             self.reverse_mode = True
             self.reverse_mode_pub.publish(Bool(data=True))
             self.uturn_start_time = 0.0
             self.transition_to(self.POST_UTURN_ALIGN)
             return cmd
         
-        # IMPROVED: Reduced speeds for stability
-        cmd.linear.x = self.uturn_forward_speed  # 0.3 m/s
-        cmd.angular.z = self.uturn_angular_speed  # 0.4 rad/s
+        cmd.linear.x = self.uturn_forward_speed
+        cmd.angular.z = self.uturn_angular_speed
         
-        # CRITICAL: Strong depth control during U-turn
+        # Depth control during U-turn
         depth_error = self.uturn_depth - self.current_depth
         
         if abs(depth_error) > 0.2:
-            # Strong correction for large errors
             cmd.linear.z = depth_error * 1.5
             cmd.linear.z = max(-0.8, min(cmd.linear.z, 0.8))
         elif abs(depth_error) > 0.1:
-            # Moderate correction
             cmd.linear.z = depth_error * 1.0
             cmd.linear.z = max(-0.5, min(cmd.linear.z, 0.5))
         else:
-            # Fine tuning
             cmd.linear.z = depth_error * 0.5
-        
-        # Log depth status
-        if abs(depth_error) > 0.15:
-            self.get_logger().warn(
-                f'U-TURN: depth={self.current_depth:.2f}m (error={depth_error:.2f}m), '
-                f'correcting with z={cmd.linear.z:.2f}',
-                throttle_duration_sec=0.5
-            )
-        else:
-            self.get_logger().info(
-                f'🔄 U-TURN: {math.degrees(angle_turned):.0f}° / 180° | '
-                f'depth={self.current_depth:.2f}m ✓',
-                throttle_duration_sec=0.5
-            )
         
         return cmd
     
@@ -480,7 +512,7 @@ class QualificationNavigator(Node):
         
         if self.gate_detected:
             if abs(self.frame_position) < 0.15:
-                self.get_logger().info('✅ POST-UTURN ALIGNMENT COMPLETE')
+                self.get_logger().info('✅ POST-UTURN ALIGNED')
                 self.transition_to(self.REVERSE_APPROACHING)
                 return cmd
             else:
@@ -493,21 +525,20 @@ class QualificationNavigator(Node):
         return cmd
     
     def reverse_clearing(self, cmd: Twist) -> Twist:
-        """Reverse clearing - stay submerged"""
+        """Reverse clearance - 0.55m past gate"""
         if self.current_position:
             current_x = self.current_position[0]
             
             if current_x <= self.reverse_clearance_x:
                 self.get_logger().info('='*70)
-                self.get_logger().info('✅ REVERSE CLEARANCE COMPLETE (0.55m)')
-                self.get_logger().info('   🎉 MISSION COMPLETE!')
+                self.get_logger().info('🎉 QUALIFICATION COMPLETE!')
                 self.get_logger().info('='*70)
                 self.transition_to(self.COMPLETED)
                 return cmd
             
             distance_needed = current_x - self.reverse_clearance_x
             self.get_logger().info(
-                f'🏃 REVERSE CLEARING: X={current_x:.2f}m, need {distance_needed:.2f}m',
+                f'🏃 REVERSE CLEARING: need {distance_needed:.2f}m',
                 throttle_duration_sec=0.4
             )
         
@@ -515,7 +546,7 @@ class QualificationNavigator(Node):
         return cmd
     
     def completed(self, cmd: Twist) -> Twist:
-        """Mission complete - stay submerged"""
+        """Mission complete - stay in place"""
         
         if not hasattr(self, '_completion_reported'):
             self._completion_reported = False
@@ -525,11 +556,9 @@ class QualificationNavigator(Node):
             
             self.get_logger().info('='*70)
             self.get_logger().info('🏆 QUALIFICATION COMPLETE!')
-            self.get_logger().info('='*70)
             self.get_logger().info(f'   Pass 1: {"✅" if self.first_pass_complete else "❌"}')
             self.get_logger().info(f'   Pass 2: {"✅" if self.second_pass_complete else "❌"}')
             self.get_logger().info(f'   Total time: {total_time:.1f}s')
-            self.get_logger().info(f'   Bot depth: {self.current_depth:.2f}m (SUBMERGED ✓)')
             
             if self.first_pass_complete and self.second_pass_complete:
                 self.get_logger().info('   🏆 POINTS: 2 - QUALIFIED FOR FINALS!')
@@ -539,7 +568,6 @@ class QualificationNavigator(Node):
             self.get_logger().info('='*70)
             self._completion_reported = True
         
-        # Stay in place at mission depth
         cmd.linear.x = 0.0
         cmd.linear.y = 0.0
         cmd.angular.z = 0.0
@@ -571,6 +599,7 @@ class QualificationNavigator(Node):
             self.APPROACHING: 'APPROACHING',
             self.ALIGNING: 'ALIGNING',
             self.FINAL_APPROACH: 'FINAL_APPROACH',
+            self.COMMITTING: 'COMMITTING',
             self.PASSING: 'PASSING',
             self.CLEARING: 'CLEARING',
             self.UTURN: 'UTURN',
@@ -579,6 +608,7 @@ class QualificationNavigator(Node):
             self.REVERSE_APPROACHING: 'REVERSE_APPROACHING',
             self.REVERSE_ALIGNING: 'REVERSE_ALIGNING',
             self.REVERSE_FINAL_APPROACH: 'REVERSE_FINAL_APPROACH',
+            self.REVERSE_COMMITTING: 'REVERSE_COMMITTING',
             self.REVERSE_PASSING: 'REVERSE_PASSING',
             self.REVERSE_CLEARING: 'REVERSE_CLEARING',
             self.COMPLETED: 'COMPLETED',
@@ -596,7 +626,7 @@ class QualificationNavigator(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = QualificationNavigator()
+    node = CommitZoneNavigator()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
