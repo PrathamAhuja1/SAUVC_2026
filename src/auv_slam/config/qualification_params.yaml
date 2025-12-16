@@ -53,10 +53,13 @@ qualification_navigator_node:
     uturn_angular_speed: 0.4
     uturn_depth: -0.8
     
-    # Gate position and clearance (SAUVC: 0.55m clearance required)
+    # Gate position and clearance
     gate_x_position: 0.0
     auv_length: 0.46
-    clearance_margin: 0.36         # 0.46 + 0.36 = 0.82m > 0.55m (safe)
+    
+    # UPDATED: Clearance margin increased to 4.0m to ensure 
+    # bot moves 4m past the gate before U-turn.
+    clearance_margin: 4.0         
     
     # Gate width
     gate_width: 1.5

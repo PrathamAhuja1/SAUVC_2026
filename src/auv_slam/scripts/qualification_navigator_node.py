@@ -40,15 +40,7 @@ class CommitZoneNavigator(Node):
         
         self.state = self.SUBMERGING
         
-        # Gate and clearance parameters (SAUVC rules: 0.55m clearance)
-        self.gate_x_position = 0.0
-        self.mission_depth = -0.8
-        self.auv_length = 0.46
-        self.clearance_margin = 0.36
-        
-        self.forward_clearance_x = self.gate_x_position + self.auv_length + self.clearance_margin
-        self.reverse_clearance_x = self.gate_x_position - self.auv_length - self.clearance_margin
-        
+        # --- DECLARE PARAMETERS ---
         # Navigation parameters
         self.declare_parameter('search_forward_speed', 0.4)
         self.declare_parameter('approach_speed', 0.6)
@@ -58,20 +50,26 @@ class CommitZoneNavigator(Node):
         self.declare_parameter('alignment_max_time', 20.0)
         self.declare_parameter('final_approach_speed', 0.5)
         
-        # NEW: Commit zone parameters
-        self.declare_parameter('commit_distance', 1.2)        # Start commit at 1.2m
-        self.declare_parameter('commit_alignment_threshold', 0.10)  # Must be within ±10%
-        self.declare_parameter('commit_speed', 0.8)           # Speed during commit
+        # Commit zone parameters
+        self.declare_parameter('commit_distance', 1.2)
+        self.declare_parameter('commit_alignment_threshold', 0.10)
+        self.declare_parameter('commit_speed', 0.8)
         
-        self.declare_parameter('passing_trigger_distance', 0.6)  # Was 1.0, now 0.6
+        self.declare_parameter('passing_trigger_distance', 0.6)
         self.declare_parameter('passing_speed', 1.0)
         
         # U-turn parameters
         self.declare_parameter('uturn_forward_speed', 0.3)
         self.declare_parameter('uturn_angular_speed', 0.4)
         self.declare_parameter('uturn_depth', -0.8)
+
+        # Gate and geometry parameters
+        self.declare_parameter('mission_depth', -0.8)
+        self.declare_parameter('gate_x_position', 0.0)
+        self.declare_parameter('auv_length', 0.46)
+        self.declare_parameter('clearance_margin', 4.0) # Default updated to 4.0
         
-        # Get parameters
+        # --- GET PARAMETERS ---
         self.search_forward_speed = self.get_parameter('search_forward_speed').value
         self.approach_speed = self.get_parameter('approach_speed').value
         self.approach_stop_distance = self.get_parameter('approach_stop_distance').value
@@ -86,11 +84,23 @@ class CommitZoneNavigator(Node):
         
         self.passing_trigger_distance = self.get_parameter('passing_trigger_distance').value
         self.passing_speed = self.get_parameter('passing_speed').value
-        self.gate_width = 1.5
         
         self.uturn_forward_speed = self.get_parameter('uturn_forward_speed').value
         self.uturn_angular_speed = self.get_parameter('uturn_angular_speed').value
         self.uturn_depth = self.get_parameter('uturn_depth').value
+
+        # Geometry & Mission
+        self.mission_depth = self.get_parameter('mission_depth').value
+        self.gate_x_position = self.get_parameter('gate_x_position').value
+        self.auv_length = self.get_parameter('auv_length').value
+        self.clearance_margin = self.get_parameter('clearance_margin').value
+        
+        # Calculate clearance targets based on parameters
+        # This ensures we move clearance_margin distance past the gate
+        self.forward_clearance_x = self.gate_x_position + self.auv_length + self.clearance_margin
+        self.reverse_clearance_x = self.gate_x_position - self.auv_length - self.clearance_margin
+        
+        self.gate_width = 1.5
         
         # State variables
         self.gate_detected = False
@@ -135,12 +145,13 @@ class CommitZoneNavigator(Node):
         self.create_timer(0.05, self.control_loop)
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ COMMIT ZONE QUALIFICATION NAVIGATOR')
+        self.get_logger().info('✅ COMMIT ZONE QUALIFICATION NAVIGATOR (UPDATED)')
         self.get_logger().info('='*70)
         self.get_logger().info('   ✓ No center locking')
         self.get_logger().info('   ✓ Geometric inference detection')
         self.get_logger().info(f'   ✓ Commit zone at {self.commit_distance}m')
-        self.get_logger().info(f'   ✓ 0.55m clearance (SAUVC compliant)')
+        self.get_logger().info(f'   ✓ Clearance margin: {self.clearance_margin}m')
+        self.get_logger().info(f'   ✓ Forward clearance target X: {self.forward_clearance_x:.2f}m')
         self.get_logger().info('='*70)
     
     def gate_cb(self, msg: Bool):
@@ -452,7 +463,7 @@ class CommitZoneNavigator(Node):
         return cmd
     
     def clearing(self, cmd: Twist) -> Twist:
-        """Forward clearance - 0.55m past gate"""
+        """Forward clearance - moves 4m past gate if clearance_margin is 4.0"""
         if self.current_position:
             current_x = self.current_position[0]
             
@@ -525,7 +536,7 @@ class CommitZoneNavigator(Node):
         return cmd
     
     def reverse_clearing(self, cmd: Twist) -> Twist:
-        """Reverse clearance - 0.55m past gate"""
+        """Reverse clearance - moves past gate by margin"""
         if self.current_position:
             current_x = self.current_position[0]
             
