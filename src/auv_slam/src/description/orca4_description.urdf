@@ -2,10 +2,6 @@
 <robot name="orca4_ign" xmlns:xacro="http://ros.org/wiki/xacro">
     <origin xyz="0 0 0" rpy="0 0 0"/>
 
-    <!-- BlueROV2 thruster reference: http://www.ardusub.com/introduction/features.html -->
-    <!-- fluid_density: 1000 -->
-    <!-- displaced_mass: 10.05 -->
-
     <link name="base_link">
       <inertial>
         <origin xyz="0 0 0.011" rpy="0 0 0"/>
@@ -19,7 +15,6 @@
         </geometry>
       </visual>
 
-      <!-- Collision volume * fluid_density == displaced mass, used by BuoyancyPlugin -->
       <collision name="base_link_collision">
         <origin xyz="0 0 0.06" rpy="0 0 0"/>
         <geometry>
@@ -29,28 +24,24 @@
 
     </link>
 
-    <!-- Hydrodynamics plugin -->
     <gazebo>
     <plugin
         filename="ignition-gazebo-hydrodynamics-system"
         name="ignition::gazebo::systems::Hydrodynamics">
       <link_name>base_link</link_name>
       <water_density>1000</water_density>
-      <!-- Added mass: -->
       <xDotU>0</xDotU>
       <yDotV>0</yDotV>
       <zDotW>0</zDotW>
       <kDotP>0</kDotP>
       <mDotQ>0</mDotQ>
       <nDotR>0</nDotR>
-      <!-- First order stability derivative: -->
       <xU>0</xU>
       <yV>0</yV>
       <zW>0</zW>
       <kP>0</kP>
       <mQ>0</mQ>
       <nR>0</nR>
-      <!-- Second order stability derivative: -->
       <xUabsU>-33.800000000000004</xUabsU>
       <yVabsV>-54.26875</yVabsV>
       <zWabsW>-73.37135</zWabsW>
@@ -148,52 +139,47 @@
     <parent link="base_link" />
     <child link="thruster1" />
     <origin xyz="0.14 -0.092 0" rpy="0 0 -0.7853981633974483"/>
-    <axis xyz="1 0 0" />  <!-- CRITICAL FIX: Changed from "0 0 -1" -->
+    <axis xyz="1 0 0" />
     <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
   </joint>
 
-  <!-- Thruster 2: Front-Right (45° angle, facing forward-right) -->
   <joint name="thruster2_joint" type="revolute">
     <parent link="base_link" />
     <child link="thruster2" />
     <origin xyz="0.14 0.092 0" rpy="0 0 -2.356194490192345"/>
-    <axis xyz="1 0 0" />  <!-- CRITICAL FIX: Changed from "0 0 -1" -->
+    <axis xyz="1 0 0" />
     <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
   </joint>
 
-  <!-- Thruster 3: Back-Left (45° angle, facing backward-left) -->
   <joint name="thruster3_joint" type="revolute">
     <parent link="base_link" />
     <child link="thruster3" />
     <origin xyz="-0.14 -0.092 0" rpy="0 0 0.7853981633974483"/>
-    <axis xyz="1 0 0" />  <!-- CRITICAL FIX: Changed from "0 0 -1" -->
+    <axis xyz="1 0 0" />
     <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
   </joint>
 
-  <!-- Thruster 4: Back-Right (45° angle, facing backward-right) -->
   <joint name="thruster4_joint" type="revolute">
     <parent link="base_link" />
     <child link="thruster4" />
     <origin xyz="-0.14 0.092 0" rpy="0 0 2.356194490192345"/>
-    <axis xyz="1 0 0" />  <!-- CRITICAL FIX: Changed from "0 0 -1" -->
+    <axis xyz="1 0 0" />
     <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
   </joint>
 
-  <!-- Thruster 5: Vertical Front (pointing down) -->
   <joint name="thruster5_joint" type="revolute">
     <parent link="base_link" />
     <child link="thruster5" />
     <origin xyz="0 -0.109 0.077" rpy="0 0 0"/>
-    <axis xyz="0 0 1" />  <!-- This one is correct -->
+    <axis xyz="0 0 1" />
     <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
   </joint>
 
-  <!-- Thruster 6: Vertical Back (pointing down) -->
   <joint name="thruster6_joint" type="revolute">
     <parent link="base_link" />
     <child link="thruster6" />
     <origin xyz="0 0.109 0.077" rpy="0 0 0"/>
-    <axis xyz="0 0 1" />  <!-- This one is correct -->
+    <axis xyz="0 0 1" />
     <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
   </joint>
 
@@ -231,7 +217,6 @@
         name="ignition::gazebo::systems::Thruster">
       <namespace>orca4_ign</namespace>
       <joint_name>thruster3_joint</joint_name>
-      <!-- Reverse spin to balance torque -->
       <thrust_coefficient>-0.02</thrust_coefficient>
       <fluid_density>1000</fluid_density>
       <propeller_diameter>0.1</propeller_diameter>
@@ -246,7 +231,6 @@
         name="ignition::gazebo::systems::Thruster">
       <namespace>orca4_ign</namespace>
       <joint_name>thruster4_joint</joint_name>
-      <!-- Reverse spin to balance torque -->
       <thrust_coefficient>-0.02</thrust_coefficient>
       <fluid_density>1000</fluid_density>
       <propeller_diameter>0.1</propeller_diameter>
@@ -275,7 +259,6 @@
         name="ignition::gazebo::systems::Thruster">
       <namespace>orca4_ign</namespace>
       <joint_name>thruster6_joint</joint_name>
-      <!-- Reverse spin to balance torque -->
       <thrust_coefficient>-0.02</thrust_coefficient>
       <fluid_density>1000</fluid_density>
       <propeller_diameter>0.1</propeller_diameter>
@@ -352,6 +335,7 @@
     <child link="back_cam_link"/>
     <origin xyz="-0.24 0 0" rpy="0 0 3.141592"/>
   </joint>
+
     <gazebo reference="front_left_cam_link">
     <sensor name="front_left_camera" type="camera">
       <camera>
@@ -364,11 +348,20 @@
           <near>0.1</near>
           <far>30</far>
         </clip>
+        <distortion>
+          <k1>0.0</k1>
+          <k2>0.0</k2>
+          <k3>0.0</k3>
+          <p1>0.0</p1>
+          <p2>0.0</p2>
+          <center>0.5 0.5</center>
+        </distortion>
       </camera>
       <always_on>1</always_on>
       <update_rate>30</update_rate>
       <visualize>true</visualize>
       <topic>/front_left/image_raw</topic>
+      <enable_metrics>false</enable_metrics>
     </sensor>
   </gazebo>
 
@@ -384,11 +377,20 @@
           <near>0.1</near>
           <far>30</far>
         </clip>
+        <distortion>
+          <k1>0.0</k1>
+          <k2>0.0</k2>
+          <k3>0.0</k3>
+          <p1>0.0</p1>
+          <p2>0.0</p2>
+          <center>0.5 0.5</center>
+        </distortion>
       </camera>
       <always_on>1</always_on>
       <update_rate>30</update_rate>
       <visualize>true</visualize>
       <topic>/front_right/image_raw</topic>
+      <enable_metrics>false</enable_metrics>
     </sensor>
   </gazebo>
 
@@ -436,13 +438,13 @@
     <plugin
     filename="ignition-gazebo-odometry-publisher-system"
     name="ignition::gazebo::systems::OdometryPublisher">
-    <link_name>base_link</link_name>  <!-- Use your main body link -->
-    <odom_publish_topic>/odom</odom_publish_topic> <!-- Optional -->
+    <link_name>base_link</link_name>
+    <odom_publish_topic>/odom</odom_publish_topic>
     <frame_id>odom</frame_id>
     <child_frame_id>base_link</child_frame_id>
     <publish_tf>true</publish_tf>
     <use_world_coordinates>true</use_world_coordinates>
-    <covariance> <!-- Optional -->
+    <covariance>
       0.01 0 0 0 0 0
       0 0.01 0 0 0 0
       0 0 0.01 0 0 0

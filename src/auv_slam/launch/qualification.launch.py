@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Qualification Mission Launch File - With Fixed Center Lock
-Compatible with properly fixed detector that never moves locked center
-"""
 
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -15,19 +11,15 @@ import launch_ros.descriptions
 def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
     
-    # Paths
     urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
     rviz_config = os.path.join(auv_slam_share, 'rviz', 'urdf_config.rviz')
     bridge_config = os.path.join(auv_slam_share, 'config', 'ign_bridge.yaml')
     
-    # Configs
     thruster_params = os.path.join(auv_slam_share, 'config', 'thruster_params.yaml')
     qual_params = os.path.join(auv_slam_share, 'config', 'qualification_params.yaml')
     
-    # World: SAUVC Qualification Pool
     world_file = os.path.join(auv_slam_share, 'worlds', 'qualification_world.sdf')
     
-    # Gazebo Environment Setup
     gz_models_path = os.path.join(auv_slam_share, "models")
     gz_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", default="")
     gz_env = {
@@ -41,11 +33,6 @@ def generate_launch_description():
                       ':'.join([gz_resource_path, gz_models_path])
     }
 
-    # ============================================================================
-    # SIMULATION NODES
-    # ============================================================================
-
-    # 1. Robot State Publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -58,7 +45,6 @@ def generate_launch_description():
         }]
     )
 
-    # 2. Joint State Publisher
     joint_state_publisher = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
@@ -66,7 +52,6 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # 3. Gazebo Simulator
     gazebo_process = ExecuteProcess(
         cmd=['ruby', FindExecutable(name="ign"), 'gazebo', '-r', '-v', '3', world_file],
         output='screen',
@@ -74,63 +59,69 @@ def generate_launch_description():
         shell=False
     )
 
-    # 4. Spawn Robot at STARTING LINE
-    spawn_entity = Node(
-        package="ros_gz_sim",
-        executable="create",
-        output="screen",
-        arguments=[
-            "-name", "orca4_ign",
-            "-topic", "robot_description",
-            "-z", "0.2",
-            "-x", "-12.0",
-            "-y", "0.0",
-            "-Y", "0.0",
-            "--ros-args", "--log-level", "warn"
-        ],
-        parameters=[{"use_sim_time": True}],
+    spawn_entity = TimerAction(
+        period=2.0,
+        actions=[
+            Node(
+                package="ros_gz_sim",
+                executable="create",
+                output="screen",
+                arguments=[
+                    "-name", "orca4_ign",
+                    "-topic", "robot_description",
+                    "-z", "0.2",
+                    "-x", "-12.0",
+                    "-y", "0.0",
+                    "-Y", "0.0",
+                    "--ros-args", "--log-level", "warn"
+                ],
+                parameters=[{"use_sim_time": True}],
+            )
+        ]
     )
 
-    # 5. Bridge (ROS <-> Gazebo)
-    bridge = Node(
-        package="ros_gz_bridge",
-        executable="parameter_bridge",
-        arguments=[
-            '--ros-args',
-            '-p', f'config_file:={bridge_config}'
-        ],
-        output='screen',
-        parameters=[{'use_sim_time': True}]
+    bridge = TimerAction(
+        period=3.0,
+        actions=[
+            Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                arguments=[
+                    '--ros-args',
+                    '-p', f'config_file:={bridge_config}'
+                ],
+                output='screen',
+                parameters=[{'use_sim_time': True}]
+            )
+        ]
     )
 
-    # ============================================================================
-    # MISSION NODES
-    # ============================================================================
-
-    # 6. Thruster Mapper
-    thruster_mapper = Node(
-        package='auv_slam',
-        executable='simple_thruster_mapper.py',
-        name='thruster_mapper',
-        output='screen',
-        parameters=[thruster_params, {'use_sim_time': True}]
+    thruster_mapper = TimerAction(
+        period=3.0,
+        actions=[
+            Node(
+                package='auv_slam',
+                executable='simple_thruster_mapper.py',
+                name='thruster_mapper',
+                output='screen',
+                parameters=[thruster_params, {'use_sim_time': True}]
+            )
+        ]
     )
     
-    # 7. FIXED Qualification Gate Detector (Center lock never moves)
-    gate_detector = TimerAction(
+    stereo_gate_detector = TimerAction(
         period=5.0,
         actions=[
             Node(
                 package='auv_slam',
-                executable='qualification_detector_node.py',
-                name='qualification_gate_detector',
+                executable='stereo_qualification_detector_node.py',
+                name='stereo_qualification_detector',
                 output='screen',
                 parameters=[qual_params, {'use_sim_time': True}]
             )
         ]
     )
     
-    # 8. Qualification Navigator (Compatible with fixed center)
     navigator = TimerAction(
         period=5.0,
         actions=[
@@ -144,7 +135,6 @@ def generate_launch_description():
         ]
     )
     
-    # 9. Safety Monitor
     safety_monitor = Node(
         package='auv_slam',
         executable='safety_monitor_node.py',
@@ -163,7 +153,6 @@ def generate_launch_description():
         }]
     )
     
-    # 10. RViz
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -173,13 +162,31 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
     
-    # 11. Debug Image Viewer
-    rqt_image_view = Node(
-        package='rqt_image_view',
-        executable='rqt_image_view',
-        name='rqt_image_view',
-        arguments=['/qualification/debug_image'],
-        parameters=[{'use_sim_time': True}]
+    rqt_debug_view = TimerAction(
+        period=7.0,
+        actions=[
+            Node(
+                package='rqt_image_view',
+                executable='rqt_image_view',
+                name='rqt_detection_view',
+                arguments=['/qualification/debug_image'],
+                parameters=[{'use_sim_time': True}]
+            )
+        ]
+    )
+    
+    imu_monitor = TimerAction(
+        period=7.0,
+        actions=[
+            Node(
+                package='auv_slam',
+                executable='imu_monitor_node.py',
+                name='imu_monitor',
+                output='screen',
+                prefix='xterm -e',
+                parameters=[{'use_sim_time': True}]
+            )
+        ]
     )
 
     return LaunchDescription([
@@ -189,10 +196,11 @@ def generate_launch_description():
         spawn_entity,
         bridge,
         thruster_mapper,
-        gate_detector,
+        stereo_gate_detector,
         navigator,
         safety_monitor,
-        rqt_image_view,
+        rqt_debug_view,
+        imu_monitor,
         rviz_node
     ])
 
