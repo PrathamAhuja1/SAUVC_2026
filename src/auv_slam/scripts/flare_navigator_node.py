@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Flare Navigator - Sequential Flare Bumping Task
-Location: src/auv_slam/scripts/flare_navigator_node.py
-Navigates to and bumps flares in specified order
+FIXED: Starts DISABLED and stabilizes until order is received
 """
 
 import rclpy
@@ -32,7 +31,8 @@ class FlareNavigator(Node):
         self.state = self.WAITING_FOR_ORDER
         
         # Parameters
-        self.declare_parameter('target_depth', -2.3)
+        self.declare_parameter('target_depth', -0.8)  # Safe shallow depth for waiting
+        self.declare_parameter('mission_depth', -2.3)  # Deeper mission depth
         self.declare_parameter('search_speed', 0.4)
         self.declare_parameter('approach_speed', 0.5)
         self.declare_parameter('bump_speed', 0.6)
@@ -42,6 +42,7 @@ class FlareNavigator(Node):
         self.declare_parameter('verification_time', 2.0)
         
         self.target_depth = self.get_parameter('target_depth').value
+        self.mission_depth = self.get_parameter('mission_depth').value
         self.search_speed = self.get_parameter('search_speed').value
         self.approach_speed = self.get_parameter('approach_speed').value
         self.bump_speed = self.get_parameter('bump_speed').value
@@ -55,6 +56,7 @@ class FlareNavigator(Node):
         self.current_target_index = 0
         self.current_target_color = None
         self.bumped_flares = []
+        self.order_received = False
         
         # Detection state
         self.flare_detected = {
@@ -111,7 +113,9 @@ class FlareNavigator(Node):
         
         # Subscriptions - Order input
         self.create_subscription(String, '/flare/mission_order', self.order_callback, 10)
-        self.task_enabled = True
+        
+        # CRITICAL: Start DISABLED until order is received
+        self.task_enabled = False
         self.create_subscription(Bool, '/flare/task_enable', self.task_enable_callback, 10)
         
         # Publishers
@@ -122,7 +126,9 @@ class FlareNavigator(Node):
         self.control_timer = self.create_timer(0.05, self.control_loop)
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ Flare Navigator Initialized')
+        self.get_logger().info('🟡 Flare Navigator WAITING FOR ORDER')
+        self.get_logger().info('   Status: DISABLED - Stabilizing at -0.8m depth')
+        self.get_logger().info('   Enter flare order in the prompt terminal...')
         self.get_logger().info('='*70)
     
     def flare_detection_callback(self, msg: Bool, color: str):
@@ -144,23 +150,31 @@ class FlareNavigator(Node):
     
     def order_callback(self, msg: String):
         """Receive flare bumping order"""
-        if self.state != self.WAITING_FOR_ORDER:
+        if self.order_received:
             self.get_logger().warn('Order already received! Ignoring new order.')
             return
         
         order_str = msg.data.strip().lower()
-        flares = order_str.split('-')
+        flares_raw = order_str.split('-')
         
-        # Validate order
-        valid_colors = ['red', 'yellow', 'blue']
-        if len(flares) != 3:
-            self.get_logger().error(f'Invalid order: must have 3 flares, got {len(flares)}')
+        # Convert short names to full names
+        color_map = {
+            'r': 'red', 'red': 'red',
+            'y': 'yellow', 'yellow': 'yellow',
+            'b': 'blue', 'blue': 'blue'
+        }
+        
+        # Validate and convert
+        if len(flares_raw) != 3:
+            self.get_logger().error(f'Invalid order: must have 3 flares, got {len(flares_raw)}')
             return
         
-        for flare in flares:
-            if flare not in valid_colors:
-                self.get_logger().error(f'Invalid flare color: {flare}')
+        flares = []
+        for flare in flares_raw:
+            if flare not in color_map:
+                self.get_logger().error(f'Invalid flare color: {flare} (use r/red, y/yellow, b/blue)')
                 return
+            flares.append(color_map[flare])
         
         if len(set(flares)) != 3:
             self.get_logger().error('Order must contain each flare exactly once')
@@ -170,56 +184,80 @@ class FlareNavigator(Node):
         self.flare_order = flares
         self.current_target_index = 0
         self.current_target_color = self.flare_order[0]
+        self.order_received = True
         
         self.get_logger().info('='*70)
         self.get_logger().info('📋 FLARE ORDER RECEIVED!')
         self.get_logger().info(f'   Order: {" → ".join([f.upper() for f in self.flare_order])}')
+        self.get_logger().info('   🚀 Starting mission in 3 seconds...')
         self.get_logger().info('='*70)
         
-        # Start mission
-        self.transition_to(self.SUBMERGING)
+        # Enable task after short delay
+        def enable_task():
+            self.task_enabled = True
+            self.target_depth = self.mission_depth  # Switch to mission depth
+            self.transition_to(self.SUBMERGING)
+            self.get_logger().info('✅ Flare task ENABLED - Mission starting!')
+        
+        self.create_timer(3.0, enable_task, oneshot=True)
     
-
     def task_enable_callback(self, msg: Bool):
         """Enable/disable this task"""
+        if msg.data and not self.order_received:
+            self.get_logger().warn('Cannot enable task - no order received yet!')
+            return
         self.task_enabled = msg.data
-        if not msg.data:
-            self.get_logger().info('🛑 Flare task DISABLED by coordinator')
-
-
+    
     def control_loop(self):
         """Main control loop"""
-
-        if not self.task_enabled:
-            cmd = Twist()
-            self.cmd_vel_pub.publish(cmd)
-            return
-    
         cmd = Twist()
         
-        # Depth control (except during bumping)
-        if self.state != self.BUMPING and self.state != self.VERIFYING_BUMP:
-            cmd.linear.z = self.depth_control(self.target_depth)
+        if not self.order_received:
+            # STABILIZE: Maintain shallow depth and zero velocity
+            cmd.linear.x = 0.0
+            cmd.linear.y = 0.0
+            cmd.linear.z = self.depth_control(self.target_depth)  # -0.8m
+            cmd.angular.z = 0.0
+            
+            # Periodic reminder
+            elapsed = time.time() - self.state_start_time
+            if int(elapsed) % 10 == 0:
+                self.get_logger().info(
+                    f'⏳ Waiting for order... (depth: {self.current_depth:.2f}m, '
+                    f'target: {self.target_depth:.2f}m)',
+                    throttle_duration_sec=9.5
+                )
         
-        # State machine
-        if self.state == self.WAITING_FOR_ORDER:
-            cmd = self.waiting_for_order(cmd)
-        elif self.state == self.SUBMERGING:
-            cmd = self.submerging(cmd)
-        elif self.state == self.SEARCHING:
-            cmd = self.searching(cmd)
-        elif self.state == self.APPROACHING:
-            cmd = self.approaching(cmd)
-        elif self.state == self.ALIGNING:
-            cmd = self.aligning(cmd)
-        elif self.state == self.BUMPING:
-            cmd = self.bumping(cmd)
-        elif self.state == self.VERIFYING_BUMP:
-            cmd = self.verifying_bump(cmd)
-        elif self.state == self.NEXT_TARGET:
-            cmd = self.next_target(cmd)
-        elif self.state == self.COMPLETED:
-            cmd = self.completed(cmd)
+        elif not self.task_enabled:
+            # Order received but task not enabled yet (during 3s delay)
+            cmd.linear.x = 0.0
+            cmd.linear.y = 0.0
+            cmd.linear.z = self.depth_control(self.target_depth)
+            cmd.angular.z = 0.0
+        
+        else:
+            # Task enabled - normal operation
+            # Depth control (except during bumping)
+            if self.state != self.BUMPING and self.state != self.VERIFYING_BUMP:
+                cmd.linear.z = self.depth_control(self.target_depth)
+            
+            # State machine
+            if self.state == self.SUBMERGING:
+                cmd = self.submerging(cmd)
+            elif self.state == self.SEARCHING:
+                cmd = self.searching(cmd)
+            elif self.state == self.APPROACHING:
+                cmd = self.approaching(cmd)
+            elif self.state == self.ALIGNING:
+                cmd = self.aligning(cmd)
+            elif self.state == self.BUMPING:
+                cmd = self.bumping(cmd)
+            elif self.state == self.VERIFYING_BUMP:
+                cmd = self.verifying_bump(cmd)
+            elif self.state == self.NEXT_TARGET:
+                cmd = self.next_target(cmd)
+            elif self.state == self.COMPLETED:
+                cmd = self.completed(cmd)
         
         self.cmd_vel_pub.publish(cmd)
         self.state_pub.publish(String(data=self.get_state_name()))
@@ -235,21 +273,8 @@ class FlareNavigator(Node):
         z_cmd = depth_error * 1.0
         return max(-0.8, min(z_cmd, 0.8))
     
-    def waiting_for_order(self, cmd: Twist) -> Twist:
-        """Wait for order - periodically remind user"""
-        elapsed = time.time() - self.state_start_time
-        
-        if int(elapsed) % 10 == 0:
-            self.get_logger().warn(
-                ' Waiting for flare order... '
-                'Send order to /flare/mission_order topic',
-                throttle_duration_sec=9.5
-            )
-        
-        return cmd
-    
     def submerging(self, cmd: Twist) -> Twist:
-        """Submerge to target depth"""
+        """Submerge to mission depth"""
         if abs(self.target_depth - self.current_depth) < 0.3:
             elapsed = time.time() - self.state_start_time
             if elapsed > 3.0:
@@ -270,10 +295,8 @@ class FlareNavigator(Node):
                 self.transition_to(self.APPROACHING)
                 return cmd
         
-        # Search pattern - spiral or sweep
+        # Search pattern
         elapsed = time.time() - self.state_start_time
-        
-        # Spiral search
         cmd.linear.x = self.search_speed
         cmd.angular.z = 0.3
         
@@ -296,13 +319,11 @@ class FlareNavigator(Node):
         
         distance = self.flare_distance[target_color]
         
-        # Check if close enough to start aligning
         if distance < 2.0:
             self.get_logger().info(f'📍 Close to {target_color.upper()} flare - aligning')
             self.transition_to(self.ALIGNING)
             return cmd
         
-        # Approach with gentle alignment
         cmd.linear.x = self.approach_speed
         cmd.angular.z = -self.flare_alignment[target_color] * 1.5
         
@@ -325,7 +346,6 @@ class FlareNavigator(Node):
         distance = self.flare_distance[target_color]
         alignment = self.flare_alignment[target_color]
         
-        # Check if ready to bump
         if distance <= self.bump_distance and abs(alignment) < self.alignment_threshold:
             self.get_logger().info(
                 f'🎯 ALIGNED with {target_color.upper()} flare - BUMPING!'
@@ -335,17 +355,13 @@ class FlareNavigator(Node):
             self.transition_to(self.BUMPING)
             return cmd
         
-        # Alignment strategy
         if abs(alignment) > 0.2:
-            # Far off - strong turn, minimal forward
             cmd.linear.x = 0.1
             cmd.angular.z = -alignment * 3.0
         elif abs(alignment) > 0.1:
-            # Moderate - medium turn, slow forward
             cmd.linear.x = 0.2
             cmd.angular.z = -alignment * 2.0
         else:
-            # Close - gentle turn, move forward
             cmd.linear.x = 0.3
             cmd.angular.z = -alignment * 1.5
         
@@ -357,7 +373,7 @@ class FlareNavigator(Node):
         return cmd
     
     def bumping(self, cmd: Twist) -> Twist:
-        """Bump the flare - full speed forward"""
+        """Bump the flare"""
         elapsed = time.time() - self.bump_start_time
         
         if elapsed >= self.bump_duration:
@@ -368,7 +384,6 @@ class FlareNavigator(Node):
             self.transition_to(self.VERIFYING_BUMP)
             return cmd
         
-        # Full speed forward
         cmd.linear.x = self.bump_speed
         cmd.linear.y = 0.0
         cmd.linear.z = 0.0
@@ -393,7 +408,6 @@ class FlareNavigator(Node):
             self.transition_to(self.NEXT_TARGET)
             return cmd
         
-        # Stop and hold position
         cmd.linear.x = 0.0
         cmd.linear.y = 0.0
         cmd.angular.z = 0.0
@@ -402,13 +416,11 @@ class FlareNavigator(Node):
     
     def next_target(self, cmd: Twist) -> Twist:
         """Move to next target"""
-        # Check if all flares bumped
         if len(self.bumped_flares) >= len(self.flare_order):
             self.get_logger().info('🎉 ALL FLARES BUMPED - MISSION COMPLETE!')
             self.transition_to(self.COMPLETED)
             return cmd
         
-        # Move to next target
         self.current_target_index += 1
         self.current_target_color = self.flare_order[self.current_target_index]
         
@@ -436,7 +448,6 @@ class FlareNavigator(Node):
             self.mission_complete_pub.publish(Bool(data=True))
             self._completion_reported = True
         
-        # Stop all movement
         cmd.linear.x = 0.0
         cmd.linear.y = 0.0
         cmd.angular.z = 0.0

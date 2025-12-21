@@ -34,9 +34,12 @@ flare_detector_node:
 
 flare_navigator_node:
   ros__parameters:
-    # Depth control
-    target_depth: -0.8
+    # CRITICAL: Waiting depth (shallow, safe for initial stabilization)
+    target_depth: -0.8  # Shallow depth while waiting for order
     depth_tolerance: 0.2
+    
+    # Mission depth (deeper, for actual flare task)
+    mission_depth: -2.3  # Task execution depth
     
     # Search behavior
     search_speed: 0.4

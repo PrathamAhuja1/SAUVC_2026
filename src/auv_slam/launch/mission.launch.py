@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""
+FIXED Mission Launch File
+Ensures proper startup sequence with order prompt
+"""
 
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -35,6 +39,7 @@ def generate_launch_description():
            ':'.join([gz_resource_path, gz_models_path])
     }
     
+    # Launch arguments
     declare_enable_rviz = DeclareLaunchArgument(
         'enable_rviz',
         default_value='false',
@@ -59,26 +64,21 @@ def generate_launch_description():
         description='Z position for robot spawn'
     )
     
-    declare_enable_flare_task = DeclareLaunchArgument(
-        'enable_flare_task',
-        default_value='true',
-        description='Enable flare task initially'
-    )
-    
-    declare_enable_gate_task = DeclareLaunchArgument(
-        'enable_gate_task',
-        default_value='false',
-        description='Enable gate task after flare completion'
-    )
-    
+    # ========================================================================
+    # IMMEDIATE START: Flare Order Prompt in separate terminal
+    # ========================================================================
     flare_order_prompt = Node(
         package='auv_slam',
         executable='prompt_flare_order.py',
         name='flare_order_prompt',
         output='screen',
-        prefix='xterm -hold -e',
+        prefix='xterm -fa "Monospace" -fs 12 -hold -e',  # Larger font, clearer window
         parameters=[{'use_sim_time': False}]
     )
+    
+    # ========================================================================
+    # CORE SIMULATION NODES (Immediate start)
+    # ========================================================================
     
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -107,6 +107,7 @@ def generate_launch_description():
         shell=False
     )
     
+    # Spawn Robot Entity (Delayed 2 seconds)
     spawn_entity = TimerAction(
         period=2.0,
         actions=[
@@ -128,6 +129,7 @@ def generate_launch_description():
         ]
     )
     
+    # ROS-Gazebo Bridge (Delayed 3 seconds)
     bridge = TimerAction(
         period=3.0,
         actions=[
@@ -144,6 +146,11 @@ def generate_launch_description():
         ]
     )
     
+    # ========================================================================
+    # CONTROL NODES (Delayed 3 seconds)
+    # ========================================================================
+    
+    # Thruster Mapper - Always active for stabilization
     thruster_mapper = TimerAction(
         period=3.0,
         actions=[
@@ -157,6 +164,11 @@ def generate_launch_description():
         ]
     )
     
+    # ========================================================================
+    # MISSION NODES (Delayed 5 seconds - after stabilization starts)
+    # ========================================================================
+    
+    # Task Coordinator - Manages task switching
     task_coordinator = TimerAction(
         period=5.0,
         actions=[
@@ -170,6 +182,7 @@ def generate_launch_description():
         ]
     )
     
+    # Flare Detector - Always running for detection
     flare_detector = TimerAction(
         period=5.0,
         actions=[
@@ -183,6 +196,7 @@ def generate_launch_description():
         ]
     )
     
+    # Flare Navigator - Starts DISABLED, waits for order
     flare_navigator = TimerAction(
         period=5.0,
         actions=[
@@ -196,6 +210,7 @@ def generate_launch_description():
         ]
     )
     
+    # Gate Detector (will be enabled after flare task)
     gate_detector = TimerAction(
         period=10.0,
         actions=[
@@ -204,12 +219,12 @@ def generate_launch_description():
                 executable='gate_detector_node.py',
                 name='gate_detector',
                 output='screen',
-                parameters=[gate_params, {'use_sim_time': True}],
-                condition=IfCondition(LaunchConfiguration('enable_gate_task'))
+                parameters=[gate_params, {'use_sim_time': True}]
             )
         ]
     )
     
+    # Gate Navigator (will be enabled after flare task)
     gate_navigator = TimerAction(
         period=10.0,
         actions=[
@@ -218,12 +233,12 @@ def generate_launch_description():
                 executable='gate_navigator_node.py',
                 name='gate_navigator',
                 output='screen',
-                parameters=[gate_params, {'use_sim_time': True}],
-                condition=IfCondition(LaunchConfiguration('enable_gate_task'))
+                parameters=[gate_params, {'use_sim_time': True}]
             )
         ]
     )
     
+    # Safety Monitor
     safety_monitor = TimerAction(
         period=3.0,
         actions=[
@@ -237,6 +252,10 @@ def generate_launch_description():
         ]
     )
     
+    # ========================================================================
+    # VISUALIZATION (Optional)
+    # ========================================================================
+    
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -247,6 +266,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('enable_rviz'))
     )
     
+    # Debug viewers
     flare_debug_viewer = Node(
         package='rqt_image_view',
         executable='rqt_image_view',
@@ -260,36 +280,40 @@ def generate_launch_description():
         executable='rqt_image_view',
         name='gate_debug_viewer',
         arguments=['/gate/debug_image'],
-        parameters=[{'use_sim_time': True}],
-        condition=IfCondition(LaunchConfiguration('enable_gate_task'))
+        parameters=[{'use_sim_time': True}]
     )
     
     return LaunchDescription([
+        # Launch arguments
         declare_enable_rviz,
         declare_spawn_x,
         declare_spawn_y,
         declare_spawn_z,
-        declare_enable_flare_task,
-        declare_enable_gate_task,
         
+        # IMMEDIATE: Order prompt (appears right away)
         flare_order_prompt,
         
+        # Core simulation (immediate)
         robot_state_publisher,
         joint_state_publisher,
         gazebo_process,
         
-        spawn_entity,
-        bridge,
-        thruster_mapper,
-        task_coordinator,
-        safety_monitor,
+        # Timed launches
+        spawn_entity,       # 2s
+        bridge,             # 3s
+        thruster_mapper,    # 3s - Enables stabilization
         
-        flare_detector,
-        flare_navigator,
+        # Mission nodes
+        task_coordinator,   # 5s
+        safety_monitor,     # 3s
         
-        gate_detector,
-        gate_navigator,
+        flare_detector,     # 5s
+        flare_navigator,    # 5s - Starts disabled, waiting for order
         
+        gate_detector,      # 10s
+        gate_navigator,     # 10s
+        
+        # Visualization
         rviz_node,
         flare_debug_viewer,
         gate_debug_viewer,
