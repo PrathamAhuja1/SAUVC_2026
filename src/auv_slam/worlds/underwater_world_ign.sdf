@@ -240,13 +240,12 @@
     </model>
 
     <!-- ========================================================================== -->
-    <!-- NAVIGATION GATE - At X=-4m (middle-left area as per map)                  -->
     <!-- 150cm wide x 150cm tall                                                    -->
     <!-- Posts separated in Y-axis (left-right)                                     -->
     <!-- ========================================================================== -->
     <model name="navigation_gate">
       <static>true</static>
-      <pose>-4 0 -0.8 0 0 0</pose>
+      <pose>8 0 -0.8 0 0 0</pose>
       <link name="gate_link">
         
         <!-- LEFT POST (RED - PORT SIDE) -->
@@ -472,12 +471,11 @@
 
     <!-- ========================================================================== -->
     <!-- ORANGE FLARE - Obstacle (before gate, in blue zone on map)                -->
-    <!-- Located at approximately X=-8m, Y=3m (to the right side)                  -->
     <!-- Height: 150cm tall, ~15cm diameter (much larger than communication flares)-->
     <!-- ========================================================================== -->
     <model name="orange_flare">
       <static>true</static>
-      <pose>-8 3 -0.85 0 0 0</pose>
+      <pose>-6 2.5 -0.85 0 0 0</pose>
       <link name="flare_link">
         <collision name="flare_collision">
           <geometry>

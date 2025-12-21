@@ -35,7 +35,7 @@ flare_detector_node:
 flare_navigator_node:
   ros__parameters:
     # Depth control
-    target_depth: -2.3
+    target_depth: -0.8
     depth_tolerance: 0.2
     
     # Search behavior

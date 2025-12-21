@@ -111,6 +111,8 @@ class FlareNavigator(Node):
         
         # Subscriptions - Order input
         self.create_subscription(String, '/flare/mission_order', self.order_callback, 10)
+        self.task_enabled = True
+        self.create_subscription(Bool, '/flare/task_enable', self.task_enable_callback, 10)
         
         # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
@@ -121,13 +123,6 @@ class FlareNavigator(Node):
         
         self.get_logger().info('='*70)
         self.get_logger().info('✅ Flare Navigator Initialized')
-        self.get_logger().info('='*70)
-        self.get_logger().info('⏳ WAITING FOR FLARE ORDER...')
-        self.get_logger().info('')
-        self.get_logger().info('   Publish order to: /flare/mission_order')
-        self.get_logger().info('   Format: "red-yellow-blue" or "blue-red-yellow"')
-        self.get_logger().info('')
-        self.get_logger().info('   Example: ros2 topic pub /flare/mission_order std_msgs/String "data: red-yellow-blue"')
         self.get_logger().info('='*70)
     
     def flare_detection_callback(self, msg: Bool, color: str):
@@ -184,8 +179,22 @@ class FlareNavigator(Node):
         # Start mission
         self.transition_to(self.SUBMERGING)
     
+
+    def task_enable_callback(self, msg: Bool):
+        """Enable/disable this task"""
+        self.task_enabled = msg.data
+        if not msg.data:
+            self.get_logger().info('🛑 Flare task DISABLED by coordinator')
+
+
     def control_loop(self):
         """Main control loop"""
+
+        if not self.task_enabled:
+            cmd = Twist()
+            self.cmd_vel_pub.publish(cmd)
+            return
+    
         cmd = Twist()
         
         # Depth control (except during bumping)
@@ -227,7 +236,16 @@ class FlareNavigator(Node):
         return max(-0.8, min(z_cmd, 0.8))
     
     def waiting_for_order(self, cmd: Twist) -> Twist:
-        """Wait for order - do nothing"""
+        """Wait for order - periodically remind user"""
+        elapsed = time.time() - self.state_start_time
+        
+        if int(elapsed) % 10 == 0:
+            self.get_logger().warn(
+                ' Waiting for flare order... '
+                'Send order to /flare/mission_order topic',
+                throttle_duration_sec=9.5
+            )
+        
         return cmd
     
     def submerging(self, cmd: Twist) -> Twist:

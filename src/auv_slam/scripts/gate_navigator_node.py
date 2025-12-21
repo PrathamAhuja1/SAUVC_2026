@@ -147,6 +147,10 @@ class ProperGateNavigator(Node):
         self.flare_avoidance_sub = self.create_subscription(
             Float32, '/flare/avoidance_direction', self.flare_avoidance_callback, 10)
         
+        self.task_enabled = False
+        self.create_subscription(
+            Bool, '/gate/task_enable', self.task_enable_callback, 10)
+        
         # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
         self.state_pub = self.create_publisher(String, '/gate/navigation_state', 10)
@@ -211,6 +215,13 @@ class ProperGateNavigator(Node):
             self.flare_distance = math.sqrt(dx*dx + dy*dy)
     
     def control_loop(self):
+
+        if not self.task_enabled:
+            cmd = Twist()
+            self.cmd_vel_pub.publish(cmd)
+            self.state_pub.publish(String(data='DISABLED'))
+            return
+        
         cmd = Twist()
         
         # Depth control with proper deadband
@@ -276,6 +287,20 @@ class ProperGateNavigator(Node):
         
         return cmd
     
+
+    def task_enable_callback(self, msg: Bool):
+        """Enable/disable gate navigation task"""
+        was_enabled = self.task_enabled
+        self.task_enabled = msg.data
+        
+        if not was_enabled and msg.data:
+            self.get_logger().info('=' * 70)
+            self.get_logger().info('🚀 GATE TASK NOW ENABLED - Starting navigation')
+            self.get_logger().info('=' * 70)
+        elif was_enabled and not msg.data:
+            self.get_logger().info('🛑 Gate task DISABLED')
+
+
     def approaching_behavior(self, cmd: Twist) -> Twist:
         """
         CASUAL APPROACH: Move toward gate from far (5m → 3m)

@@ -38,6 +38,7 @@ install(PROGRAMS
   scripts/flare_navigator_node.py
   scripts/task_coordinator_node.py
   scripts/demo.py
+  scripts/prompt_flare_order.py
   DESTINATION lib/${PROJECT_NAME})
 
 

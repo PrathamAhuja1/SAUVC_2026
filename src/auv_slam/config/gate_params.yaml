@@ -30,7 +30,7 @@ gate_detector_node:
 gate_navigator_node:
   ros__parameters:
   
-    target_depth: -1.7
+    target_depth: -0.7
     depth_deadband: 0.25
     depth_gain_weak: 0.5
     depth_gain_strong: 1.5
@@ -66,6 +66,6 @@ gate_navigator_node:
     # Prevents infinite avoidance loops
     flare_max_duration: 10.0
 
-    gate_x_position: -8.0
+    gate_x_position: 8.0
     gate_clearance_distance: 0.25
     
