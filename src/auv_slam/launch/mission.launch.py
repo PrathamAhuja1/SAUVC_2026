@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-FIXED Mission Launch File
-Ensures proper startup sequence with order prompt
+FIXED Mission Launch File - Same Terminal Order Input
+Order prompt appears in the SAME terminal where you launch
 """
 
 import os
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory, get_package_prefix
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess, TimerAction, DeclareLaunchArgument
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
@@ -16,6 +16,7 @@ import launch_ros.descriptions
 
 def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
+    auv_slam_prefix = get_package_prefix('auv_slam')
     
     urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
     rviz_config = os.path.join(auv_slam_share, 'rviz', 'urdf_config.rviz')
@@ -25,6 +26,9 @@ def generate_launch_description():
     gate_params = os.path.join(auv_slam_share, 'config', 'gate_params.yaml')
     safety_params = os.path.join(auv_slam_share, 'config', 'safety_params.yaml')
     world_file = os.path.join(auv_slam_share, 'worlds', 'underwater_world_ign.sdf')
+    
+    # CRITICAL: Correct path to installed script
+    flare_order_script = os.path.join(auv_slam_prefix, 'lib', 'auv_slam', 'prompt_flare_order.py')
     
     gz_models_path = os.path.join(auv_slam_share, "models")
     gz_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", default="")
@@ -63,22 +67,7 @@ def generate_launch_description():
         default_value='-0.6',
         description='Z position for robot spawn'
     )
-    
-    # ========================================================================
-    # IMMEDIATE START: Flare Order Prompt in separate terminal
-    # ========================================================================
-    flare_order_prompt = Node(
-        package='auv_slam',
-        executable='prompt_flare_order.py',
-        name='flare_order_prompt',
-        output='screen',
-        prefix='xterm -fa "Monospace" -fs 12 -hold -e',  # Larger font, clearer window
-        parameters=[{'use_sim_time': False}]
-    )
-    
-    # ========================================================================
-    # CORE SIMULATION NODES (Immediate start)
-    # ========================================================================
+
     
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -129,7 +118,7 @@ def generate_launch_description():
         ]
     )
     
-    # ROS-Gazebo Bridge (Delayed 3 seconds)
+    # ROS-Gazebo Bridge
     bridge = TimerAction(
         period=3.0,
         actions=[
@@ -145,12 +134,9 @@ def generate_launch_description():
             )
         ]
     )
+
     
-    # ========================================================================
-    # CONTROL NODES (Delayed 3 seconds)
-    # ========================================================================
-    
-    # Thruster Mapper - Always active for stabilization
+    # Thruster Mapper
     thruster_mapper = TimerAction(
         period=3.0,
         actions=[
@@ -163,12 +149,9 @@ def generate_launch_description():
             )
         ]
     )
+
     
-    # ========================================================================
-    # MISSION NODES (Delayed 5 seconds - after stabilization starts)
-    # ========================================================================
-    
-    # Task Coordinator - Manages task switching
+    # Task Coordinator
     task_coordinator = TimerAction(
         period=5.0,
         actions=[
@@ -182,7 +165,7 @@ def generate_launch_description():
         ]
     )
     
-    # Flare Detector - Always running for detection
+    # Flare Detector
     flare_detector = TimerAction(
         period=5.0,
         actions=[
@@ -196,7 +179,7 @@ def generate_launch_description():
         ]
     )
     
-    # Flare Navigator - Starts DISABLED, waits for order
+    # Flare Navigator
     flare_navigator = TimerAction(
         period=5.0,
         actions=[
@@ -210,7 +193,7 @@ def generate_launch_description():
         ]
     )
     
-    # Gate Detector (will be enabled after flare task)
+    # Gate Detector
     gate_detector = TimerAction(
         period=10.0,
         actions=[
@@ -224,7 +207,7 @@ def generate_launch_description():
         ]
     )
     
-    # Gate Navigator (will be enabled after flare task)
+    # Gate Navigator
     gate_navigator = TimerAction(
         period=10.0,
         actions=[
@@ -251,10 +234,20 @@ def generate_launch_description():
             )
         ]
     )
-    
-    # ========================================================================
-    # VISUALIZATION (Optional)
-    # ========================================================================
+
+    flare_order_prompt = TimerAction(
+        period=6.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['python3', flare_order_script],
+                name='flare_order_prompt',
+                output='screen',
+                shell=False,
+                emulate_tty=True,
+            )
+        ]
+    )
+
     
     rviz_node = Node(
         package='rviz2',
@@ -265,56 +258,60 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
         condition=IfCondition(LaunchConfiguration('enable_rviz'))
     )
-    
-    # Debug viewers
-    flare_debug_viewer = Node(
-        package='rqt_image_view',
-        executable='rqt_image_view',
-        name='flare_debug_viewer',
-        arguments=['/flare/debug_image'],
-        parameters=[{'use_sim_time': True}]
+
+    flare_debug_viewer = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='rqt_image_view',
+                executable='rqt_image_view',
+                name='flare_debug_viewer',
+                arguments=['/flare/debug_image'],
+                parameters=[{'use_sim_time': True}],
+                output='screen'
+            )
+        ]
     )
-    
-    gate_debug_viewer = Node(
-        package='rqt_image_view',
-        executable='rqt_image_view',
-        name='gate_debug_viewer',
-        arguments=['/gate/debug_image'],
-        parameters=[{'use_sim_time': True}]
+
+    gate_debug_viewer = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='rqt_image_view',
+                executable='rqt_image_view',
+                name='gate_debug_viewer',
+                arguments=['/gate/debug_image'],
+                parameters=[{'use_sim_time': True}],
+                output='screen'
+            )
+        ]
     )
+
     
     return LaunchDescription([
-        # Launch arguments
         declare_enable_rviz,
         declare_spawn_x,
         declare_spawn_y,
         declare_spawn_z,
-        
-        # IMMEDIATE: Order prompt (appears right away)
-        flare_order_prompt,
-        
-        # Core simulation (immediate)
+
         robot_state_publisher,
         joint_state_publisher,
         gazebo_process,
+        spawn_entity, 
+        bridge,      
+        thruster_mapper,
+        task_coordinator, 
+        safety_monitor, 
         
-        # Timed launches
-        spawn_entity,       # 2s
-        bridge,             # 3s
-        thruster_mapper,    # 3s - Enables stabilization
+        flare_detector,
+        flare_navigator, 
         
-        # Mission nodes
-        task_coordinator,   # 5s
-        safety_monitor,     # 3s
-        
-        flare_detector,     # 5s
-        flare_navigator,    # 5s - Starts disabled, waiting for order
-        
-        gate_detector,      # 10s
-        gate_navigator,     # 10s
-        
-        # Visualization
+        gate_detector,
+        gate_navigator,
+        flare_order_prompt,
+
         rviz_node,
+        
         flare_debug_viewer,
         gate_debug_viewer,
     ])
