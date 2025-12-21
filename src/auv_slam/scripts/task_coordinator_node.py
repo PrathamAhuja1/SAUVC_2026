@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
-Task Coordinator - Manages Sequential Mission Tasks
-Location: src/auv_slam/scripts/task_coordinator_node.py
+Task Coordinator - PROPER SAUVC SEQUENCE
+Gate → Flares → Surface
 
-Coordinates:
-1. Flare Bumping Task
-2. Gate Navigation Task
-3. Additional tasks
-
-Ensures proper task sequencing and prevents interference
+NO DRUMS (hardware not ready)
 """
 
 import rclpy
@@ -17,57 +12,66 @@ from std_msgs.msg import Bool, String
 import time
 
 
-class TaskCoordinator(Node):
+class SAUVCTaskCoordinator(Node):
     def __init__(self):
-        super().__init__('task_coordinator')
+        super().__init__('sauvc_task_coordinator')
         
-        # Task states
-        self.FLARE_TASK = 0
-        self.TRANSITION_TO_GATE = 1
-        self.GATE_TASK = 2
-        self.MISSION_COMPLETE = 3
+        # Task states - PROPER SEQUENCE
+        self.WAITING_FOR_FLARE_ORDER = 0
+        self.GATE_TASK = 1
+        self.TRANSITION_TO_FLARES = 2
+        self.FLARE_TASK = 3
+        self.MISSION_COMPLETE = 4
         
-        self.current_task = self.FLARE_TASK
+        self.current_task = self.WAITING_FOR_FLARE_ORDER
         
-        # Task completion flags
-        self.flare_mission_complete = False
+        # Completion flags
+        self.flare_order_received = False
         self.gate_mission_complete = False
+        self.flare_mission_complete = False
         
-        # Transition delay
+        # Transition timing
         self.transition_start_time = 0.0
-        self.transition_delay = 5.0  # 5 seconds between tasks
+        self.transition_delay = 3.0  # 3 seconds between tasks
         
         # Subscriptions
-        self.flare_complete_sub = self.create_subscription(
-            Bool, '/flare/mission_complete', self.flare_complete_callback, 10)
         self.gate_complete_sub = self.create_subscription(
             Bool, '/gate/mission_complete', self.gate_complete_callback, 10)
+        self.flare_complete_sub = self.create_subscription(
+            Bool, '/flare/mission_complete', self.flare_complete_callback, 10)
+        self.flare_order_sub = self.create_subscription(
+            String, '/flare/mission_order', self.flare_order_callback, 10)
         
         # Publishers
-        self.flare_enable_pub = self.create_publisher(Bool, '/flare/task_enable', 10)
         self.gate_enable_pub = self.create_publisher(Bool, '/gate/task_enable', 10)
+        self.flare_enable_pub = self.create_publisher(Bool, '/flare/task_enable', 10)
         self.mission_status_pub = self.create_publisher(String, '/mission/status', 10)
         
         # Timer
-        self.timer = self.create_timer(0.5, self.update_task_state)
+        self.timer = self.create_timer(0.5, self.update_state_machine)
         
-        # Initial state - Enable flare task
-        self.enable_flare_task()
+        # Initial state - EVERYTHING DISABLED
+        self.disable_all_tasks()
         
         self.get_logger().info('='*70)
-        self.get_logger().info('✅ Task Coordinator Initialized')
+        self.get_logger().info('✅ SAUVC Task Coordinator Initialized')
         self.get_logger().info('='*70)
         self.get_logger().info('📋 MISSION SEQUENCE:')
-        self.get_logger().info('   1. Flare Bumping Task (Active)')
-        self.get_logger().info('   2. Gate Navigation Task (Disabled)')
+        self.get_logger().info('   0. Wait for Flare Order (from prompt terminal)')
+        self.get_logger().info('   1. Gate Navigation Task')
+        self.get_logger().info('   2. Flare Bumping Task')
+        self.get_logger().info('   3. Surface & Complete')
+        self.get_logger().info('='*70)
+        self.get_logger().info('⏳ WAITING FOR FLARE ORDER...')
+        self.get_logger().info('   → Open the prompt terminal and enter order (e.g., r-y-b)')
         self.get_logger().info('='*70)
     
-    def flare_complete_callback(self, msg: Bool):
-        """Flare task completion callback"""
-        if msg.data and not self.flare_mission_complete:
-            self.flare_mission_complete = True
+    def flare_order_callback(self, msg: String):
+        """Flare order received from prompt"""
+        if not self.flare_order_received:
+            self.flare_order_received = True
             self.get_logger().info('='*70)
-            self.get_logger().info('🎉 FLARE TASK COMPLETE!')
+            self.get_logger().info(f'📋 FLARE ORDER RECEIVED: {msg.data.upper()}')
             self.get_logger().info('='*70)
     
     def gate_complete_callback(self, msg: Bool):
@@ -78,23 +82,22 @@ class TaskCoordinator(Node):
             self.get_logger().info('🎉 GATE TASK COMPLETE!')
             self.get_logger().info('='*70)
     
-    def update_task_state(self):
-        """Update task coordinator state machine"""
+    def flare_complete_callback(self, msg: Bool):
+        """Flare task completion callback"""
+        if msg.data and not self.flare_mission_complete:
+            self.flare_mission_complete = True
+            self.get_logger().info('='*70)
+            self.get_logger().info('🎉 FLARE TASK COMPLETE!')
+            self.get_logger().info('='*70)
+    
+    def update_state_machine(self):
+        """Main state machine"""
         
-        if self.current_task == self.FLARE_TASK:
-            # Wait for flare task to complete
-            if self.flare_mission_complete:
-                self.get_logger().info('🔄 Transitioning from Flare Task to Gate Task...')
-                self.disable_flare_task()
-                self.transition_start_time = time.time()
-                self.current_task = self.TRANSITION_TO_GATE
-        
-        elif self.current_task == self.TRANSITION_TO_GATE:
-            # Wait for transition delay
-            elapsed = time.time() - self.transition_start_time
-            if elapsed >= self.transition_delay:
+        if self.current_task == self.WAITING_FOR_FLARE_ORDER:
+            # Wait for user to input flare order
+            if self.flare_order_received:
                 self.get_logger().info('='*70)
-                self.get_logger().info('🚀 STARTING GATE NAVIGATION TASK')
+                self.get_logger().info('🚀 STARTING GATE TASK')
                 self.get_logger().info('='*70)
                 self.enable_gate_task()
                 self.current_task = self.GATE_TASK
@@ -102,19 +105,49 @@ class TaskCoordinator(Node):
         elif self.current_task == self.GATE_TASK:
             # Wait for gate task to complete
             if self.gate_mission_complete:
+                self.get_logger().info('🔄 Transitioning from Gate to Flares...')
+                self.disable_gate_task()
+                self.transition_start_time = time.time()
+                self.current_task = self.TRANSITION_TO_FLARES
+        
+        elif self.current_task == self.TRANSITION_TO_FLARES:
+            # Wait for transition delay
+            elapsed = time.time() - self.transition_start_time
+            if elapsed >= self.transition_delay:
+                self.get_logger().info('='*70)
+                self.get_logger().info('🚀 STARTING FLARE TASK')
+                self.get_logger().info('='*70)
+                self.enable_flare_task()
+                self.current_task = self.FLARE_TASK
+        
+        elif self.current_task == self.FLARE_TASK:
+            # Wait for flare task to complete
+            if self.flare_mission_complete:
                 self.get_logger().info('='*70)
                 self.get_logger().info('🏆 ALL MISSION TASKS COMPLETE!')
+                self.get_logger().info('   Gate: ✅ | Flares: ✅')
+                self.get_logger().info('   🎉 SURFACING NOW!')
                 self.get_logger().info('='*70)
-                self.disable_gate_task()
+                self.disable_flare_task()
                 self.current_task = self.MISSION_COMPLETE
         
         elif self.current_task == self.MISSION_COMPLETE:
-            # Mission finished
+            # Mission finished - do nothing
             pass
         
         # Publish mission status
         status = self.get_mission_status()
         self.mission_status_pub.publish(String(data=status))
+    
+    def enable_gate_task(self):
+        """Enable gate navigation"""
+        self.gate_enable_pub.publish(Bool(data=True))
+        self.get_logger().info('✅ Gate Task ENABLED')
+    
+    def disable_gate_task(self):
+        """Disable gate navigation"""
+        self.gate_enable_pub.publish(Bool(data=False))
+        self.get_logger().info('⏸️ Gate Task DISABLED')
     
     def enable_flare_task(self):
         """Enable flare detection and navigation"""
@@ -126,24 +159,22 @@ class TaskCoordinator(Node):
         self.flare_enable_pub.publish(Bool(data=False))
         self.get_logger().info('⏸️ Flare Task DISABLED')
     
-    def enable_gate_task(self):
-        """Enable gate detection and navigation"""
-        self.gate_enable_pub.publish(Bool(data=True))
-        self.get_logger().info('✅ Gate Task ENABLED')
-    
-    def disable_gate_task(self):
-        """Disable gate detection and navigation"""
+    def disable_all_tasks(self):
+        """Disable all tasks"""
         self.gate_enable_pub.publish(Bool(data=False))
-        self.get_logger().info('⏸️ Gate Task DISABLED')
+        self.flare_enable_pub.publish(Bool(data=False))
+        self.get_logger().info('🔒 All tasks DISABLED - Waiting for flare order')
     
     def get_mission_status(self) -> str:
         """Get current mission status string"""
-        if self.current_task == self.FLARE_TASK:
-            return "FLARE_TASK_ACTIVE"
-        elif self.current_task == self.TRANSITION_TO_GATE:
-            return "TRANSITIONING_TO_GATE"
+        if self.current_task == self.WAITING_FOR_FLARE_ORDER:
+            return "WAITING_FOR_FLARE_ORDER"
         elif self.current_task == self.GATE_TASK:
             return "GATE_TASK_ACTIVE"
+        elif self.current_task == self.TRANSITION_TO_FLARES:
+            return "TRANSITIONING_TO_FLARES"
+        elif self.current_task == self.FLARE_TASK:
+            return "FLARE_TASK_ACTIVE"
         elif self.current_task == self.MISSION_COMPLETE:
             return "MISSION_COMPLETE"
         else:
@@ -152,7 +183,7 @@ class TaskCoordinator(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = TaskCoordinator()
+    node = SAUVCTaskCoordinator()
     
     try:
         rclpy.spin(node)

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Flare Order Prompt - Same Terminal Version
-Properly handles input in the same terminal as the launch command
-Location: src/auv_slam/scripts/prompt_flare_order.py
+Enhanced Flare Order Prompt - SAUVC Mission
+User enters flare bumping order after bot stabilizes
 """
 
 import rclpy
@@ -13,7 +12,7 @@ import time
 
 
 def print_banner():
-    """Display the order input banner"""
+    """Display colorful banner"""
     banner = """
 ╔══════════════════════════════════════════════════════════════════╗
 ║                                                                  ║
@@ -21,91 +20,72 @@ def print_banner():
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-The AUV is currently STABILIZING at safe depth (-0.8m)
-⚠️  All mission tasks are PAUSED until you enter the flare order!
+📍 CURRENT STATUS:
+   → AUV is stabilizing at safe depth (-0.8m)
+   → Gate and Flare tasks are DISABLED
+   → Waiting for YOUR input to begin mission
 
 ═══════════════════════════════════════════════════════════════════
 
-VALID FLARE ORDERS (use short form):
-  
-  r-y-b  →  Red → Yellow → Blue
-  r-b-y  →  Red → Blue → Yellow
-  y-r-b  →  Yellow → Red → Blue
-  y-b-r  →  Yellow → Blue → Red
-  b-r-y  →  Blue → Red → Yellow
-  b-y-r  →  Blue → Yellow → Red
+🎨 FLARE COLORS & POSITIONS (from pool map):
+   🔴 RED Flare    - Position: (1m, -2m)  - Left side
+   🟡 YELLOW Flare - Position: (3m, 0m)   - Center
+   🔵 BLUE Flare   - Position: (5m, 2m)   - Right side
+
+═══════════════════════════════════════════════════════════════════
+
+📝 VALID FLARE ORDERS (SHORT FORM):
+
+   ┌─────────┬────────────────────────────────┐
+   │ r-y-b   │ Red → Yellow → Blue            │
+   │ r-b-y   │ Red → Blue → Yellow            │
+   │ y-r-b   │ Yellow → Red → Blue            │
+   │ y-b-r   │ Yellow → Blue → Red            │
+   │ b-r-y   │ Blue → Red → Yellow            │
+   │ b-y-r   │ Blue → Yellow → Red            │
+   └─────────┴────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════
 """
-    print(banner, flush=True)
+    print(banner)
 
 
 def main(args=None):
-    """Main function to prompt for and send flare order"""
-    
-    # Print banner immediately
     print_banner()
     
-    # Valid orders (short form only)
     valid_orders = ['r-y-b', 'r-b-y', 'y-r-b', 'y-b-r', 'b-r-y', 'b-y-r']
     
     order = None
-    attempts = 0
-    max_attempts = 10
-    
-    # Get valid order from user
-    while order not in valid_orders and attempts < max_attempts:
-        attempts += 1
+    while order not in valid_orders:
         try:
-            print(f"\n📝 Enter flare order (e.g., r-y-b): ", end='', flush=True)
-            
-            # Read input with timeout handling
-            order_input = input()
-            order = order_input.lower().strip()
+            print("\n📝 Enter flare order (e.g., r-y-b): ", end='', flush=True)
+            order = input().lower().strip()
             
             if order not in valid_orders:
-                print(f"\n❌ Invalid order '{order}'!", flush=True)
-                print("   Please use one of: r-y-b, r-b-y, y-r-b, y-b-r, b-r-y, b-y-r", flush=True)
-                
-                if attempts >= max_attempts:
-                    print(f"\n⚠️ Maximum attempts ({max_attempts}) reached. Mission aborted.", flush=True)
-                    sys.exit(1)
-                
-                print("   Try again...", flush=True)
+                print(f"\n❌ Invalid order '{order}'!")
+                print("   Please use one of: r-y-b, r-b-y, y-r-b, y-b-r, b-r-y, b-y-r")
+                print("   Try again...")
             else:
                 break
-                
         except (KeyboardInterrupt, EOFError):
-            print("\n\n❌ Order input cancelled. Mission aborted.", flush=True)
+            print("\n\n❌ Order input cancelled. Mission aborted.")
             sys.exit(1)
-        except Exception as e:
-            print(f"\n❌ Error reading input: {e}", flush=True)
-            print("   Try again...", flush=True)
-    
-    if order not in valid_orders:
-        print("\n❌ Failed to get valid order. Mission aborted.", flush=True)
-        sys.exit(1)
     
     # Display confirmation
     order_map = {'r': 'RED', 'y': 'YELLOW', 'b': 'BLUE'}
     colors = order.split('-')
     order_description = ' → '.join([order_map[c] for c in colors])
     
-    print("\n" + "="*70, flush=True)
-    print("✅ ORDER CONFIRMED!", flush=True)
-    print("="*70, flush=True)
-    print(f"   Sequence: {order_description}", flush=True)
-    print(f"   Notation: {order.upper()}", flush=True)
-    print("="*70, flush=True)
-    print("\n📡 Transmitting order to AUV...", end='', flush=True)
+    print("\n" + "="*70)
+    print("✅ ORDER CONFIRMED!")
+    print("="*70)
+    print(f"   Sequence: {order_description}")
+    print(f"   Notation: {order.upper()}")
+    print("="*70)
+    print("\n📡 Sending order to AUV...", flush=True)
     
     # Initialize ROS and send order
-    try:
-        rclpy.init(args=args)
-    except Exception as e:
-        print(f"\n❌ Failed to initialize ROS2: {e}", flush=True)
-        sys.exit(1)
-    
+    rclpy.init(args=args)
     node = Node('flare_order_prompt')
     publisher = node.create_publisher(String, '/flare/mission_order', 10)
     
@@ -113,40 +93,42 @@ def main(args=None):
     time.sleep(0.5)
     
     msg = String()
-    msg.data = order  # Send SHORT form (r-y-b)
+    msg.data = order
     
     # Send order multiple times to ensure delivery
-    successful_transmissions = 0
-    for i in range(15):
-        try:
-            publisher.publish(msg)
-            successful_transmissions += 1
-            rclpy.spin_once(node, timeout_sec=0.05)
-            if i % 3 == 0:
-                print(".", end='', flush=True)
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"\n⚠️ Transmission error: {e}", flush=True)
+    print("   Transmitting", end='', flush=True)
+    for i in range(20):
+        publisher.publish(msg)
+        rclpy.spin_once(node, timeout_sec=0.05)
+        if i % 4 == 0:
+            print(".", end='', flush=True)
+        time.sleep(0.1)
     
-    if successful_transmissions > 0:
-        print(" Done!", flush=True)
-        print(f"\n✅ Order transmitted successfully! ({successful_transmissions}/15 messages sent)", flush=True)
-        print("🚀 Mission starting in 3 seconds...", flush=True)
-        print("\n" + "="*70, flush=True)
-        print("Mission is now active. Monitor progress in the terminal.", flush=True)
-        print("="*70 + "\n", flush=True)
-        
-        # Keep node alive briefly to ensure messages are sent
-        time.sleep(3)
-    else:
-        print("\n❌ Failed to transmit order!", flush=True)
-        sys.exit(1)
+    print(" Done!")
+    print("\n✅ Order transmitted successfully!")
+    print("\n" + "="*70)
+    print("🚀 MISSION STARTING SEQUENCE:")
+    print("   1. Gate Task will activate first")
+    print("   2. After gate completion, Flare Task will activate")
+    print("   3. AUV will hit flares in order:", order_description)
+    print("   4. Mission complete & surface")
+    print("="*70)
+    print("\n" + "="*70)
+    print("📺 Monitor progress in the MAIN terminal window")
+    print("🎮 This window will stay open for reference")
+    print("="*70 + "\n")
     
-    # Cleanup
+    # Keep window open
+    try:
+        print("💡 TIP: Keep this window open to see the order")
+        print("    Press Ctrl+C to close this window...\n")
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=1.0)
+    except KeyboardInterrupt:
+        print("\n👋 Closing order prompt window...")
+    
     node.destroy_node()
     rclpy.shutdown()
-    
-    print("Order prompt completed. Mission control active.\n", flush=True)
 
 
 if __name__ == '__main__':

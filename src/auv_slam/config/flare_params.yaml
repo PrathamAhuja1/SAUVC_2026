@@ -1,17 +1,14 @@
 flare_detector_node:
   ros__parameters:
-    # Detection thresholds
     min_flare_area: 200
     max_flare_area: 3000
     min_aspect_ratio: 8.0
     max_aspect_ratio: 50.0
     min_circularity: 0.3
     
-    # Temporal filtering
     min_confirmations: 3
     detection_history_size: 5
     
-    # HSV color ranges for flares
     red_hsv:
       lower1: [0, 120, 70]
       upper1: [8, 255, 255]
@@ -26,40 +23,25 @@ flare_detector_node:
       lower: [100, 150, 50]
       upper: [130, 255, 255]
     
-    # Morphological operations
     morph_kernel_size: 3
-    
-    # Debug
     publish_debug: true
 
 flare_navigator_node:
   ros__parameters:
-    # CRITICAL: Waiting depth (shallow, safe for initial stabilization)
-    target_depth: -0.8  # Shallow depth while waiting for order
-    depth_tolerance: 0.2
+    # --- DEPTH SAFETY SETTINGS ---
+    # Safe Waiting Depth
+    target_depth: -0.8 
     
-    # Mission depth (deeper, for actual flare task)
-    mission_depth: -2.3  # Task execution depth
+    # Mission Depth (for bumping)
+    # Flares are usually higher up, -1.0m is good
+    mission_depth: -1.0
     
-    # Search behavior
+    # Navigation
     search_speed: 0.4
-    search_rotation_speed: 0.3
+    approach_speed: 0.4
+    bump_speed: 0.5
     
-    # Approach behavior
-    approach_speed: 0.5
-    approach_distance_threshold: 2.0
-    
-    # Alignment behavior
-    alignment_threshold: 0.15
-    alignment_max_time: 15.0
-    
-    # Bumping behavior
-    bump_speed: 0.6
     bump_distance_threshold: 0.8
+    alignment_threshold: 0.15
     bump_duration: 4.0
-    
-    # Verification
     verification_time: 2.0
-    
-    # Safety
-    max_mission_time: 999999.0

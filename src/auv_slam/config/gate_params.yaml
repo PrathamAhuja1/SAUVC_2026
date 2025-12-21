@@ -1,8 +1,6 @@
-# Gate Navigation Parameters - SMART FLARE AVOIDANCE VERSION
-
 gate_detector_node:
   ros__parameters:
-    # HSV RANGES - Pure colors for Gazebo
+    # HSV RANGES - Tuned for Gazebo
     red_lower1: [0, 100, 100]
     red_upper1: [10, 255, 255]
     red_lower2: [170, 100, 100]
@@ -14,58 +12,53 @@ gate_detector_node:
     orange_lower: [10, 120, 120]
     orange_upper: [25, 255, 255]
     
-    # Detection parameters
     min_area_strict: 300
     min_area_relaxed: 80
     aspect_threshold: 0.8
     gate_width_meters: 1.5
     
-    # Temporal filtering
-    detection_history_size: 3
-    min_detections_for_confirm: 1
-    
     publish_debug: true
 
-# Gate Navigation Parameters
 gate_navigator_node:
   ros__parameters:
-  
-    target_depth: -0.7
-    depth_deadband: 0.25
-    depth_gain_weak: 0.5
-    depth_gain_strong: 1.5
+    # --- DEPTH SAFETY SETTINGS ---
+    # Pool Floor: -1.6m
+    # Old Target: -1.7m (CRASH RISK)
+    # New Target: -1.0m (Safe middle water column)
+    target_depth: -1.0
     
-    # Search behavior
-    search_speed: 0.4
+    # Depth Control Tuning
+    # Reduced gains to prevent "diving" overshoot
+    depth_correction_gain: 0.8  
+    depth_deadband: 0.15        # Don't react to small errors
     
-    # CRITICAL: Approach parameters
-    approach_speed: 0.6          # Constant forward speed
-    alignment_gain: 2.0           # Proportional yaw control
-    max_yaw_correction: 0.8       # Maximum turn rate (rad/s)
-    min_confidence_for_approach: 0.3
+    # --- NAVIGATION SPEEDS ---
+    search_forward_speed: 0.4
+    search_rotation_speed: 0.15
     
-    # Passing parameters
-    passing_speed: 1.0
-    passing_distance: 2.0         # Start passing at 2m
-    passing_duration: 6.0
+    # Approach (Far -> 3m)
+    approach_start_distance: 8.0
+    approach_stop_distance: 3.0
+    approach_speed: 0.5
+    approach_yaw_gain: 0.8
     
+    # Alignment (at 3m)
+    alignment_distance: 3.0
+    alignment_threshold: 0.08
+    alignment_max_time: 20.0
+    alignment_yaw_gain: 2.5
     
-    # Only trigger avoidance when flare is THIS close
-    # (2m gives time to react without panicking)
-    flare_critical_distance: 2.0
+    # Final Approach (3m -> 1.2m)
+    final_approach_start: 3.0
+    final_approach_speed: 0.4
+    final_approach_threshold: 0.15
     
-    # Gentle lateral movement (0.4 m/s is slow and controlled)
-    # This prevents over-correction and gate loss
+    # Passing
+    passing_trigger_distance: 1.2
+    passing_speed: 1.0  # Reduced slightly to maintain control
+    gate_width: 1.5
+    
+    # Flare Avoidance
+    flare_critical_distance: 2.5
     flare_lateral_speed: 0.4
-    
-    # Keep moving forward during avoidance (0.3 m/s)
-    # This ensures progress and prevents stalling
     flare_forward_speed: 0.3
-    
-    # Maximum time to spend avoiding (10s timeout)
-    # Prevents infinite avoidance loops
-    flare_max_duration: 10.0
-
-    gate_x_position: 8.0
-    gate_clearance_distance: 0.25
-    
