@@ -1,33 +1,62 @@
-# Used by: Flare_Detection.py (flare_detector_node)
-
 flare_detector_node:
   ros__parameters:
-    # Detection parameters
-    min_contour_area: 300
-    min_aspect_ratio: 3.0
-    publish_debug: true
+    # Detection thresholds
+    min_flare_area: 200
+    max_flare_area: 3000
+    min_aspect_ratio: 8.0
+    max_aspect_ratio: 50.0
+    min_circularity: 0.3
     
-    # HSV color ranges for flares (80cm tall, ~1.6cm diameter)
-    # Red flare
+    # Temporal filtering
+    min_confirmations: 3
+    detection_history_size: 5
+    
+    # HSV color ranges for flares
     red_hsv:
       lower1: [0, 120, 70]
-      upper1: [8, 255, 255]  # Tightened from 10 to 8
-      lower2: [172, 120, 70] # Tightened from 170 to 172
+      upper1: [8, 255, 255]
+      lower2: [172, 120, 70]
       upper2: [180, 255, 255]
     
-    # Yellow flare
     yellow_hsv:
-      lower: [9, 100, 100]  # Expanded from 20 to 9 to include orange
+      lower: [20, 100, 100]
       upper: [30, 255, 255]
     
-    # Blue flare
     blue_hsv:
       lower: [100, 150, 50]
       upper: [130, 255, 255]
     
     # Morphological operations
-    morph_kernel_size: 5
+    morph_kernel_size: 3
     
-    # Confidence filtering
-    min_detections_for_confirm: 3
-    detection_history_size: 10
+    # Debug
+    publish_debug: true
+
+flare_navigator_node:
+  ros__parameters:
+    # Depth control
+    target_depth: -2.3
+    depth_tolerance: 0.2
+    
+    # Search behavior
+    search_speed: 0.4
+    search_rotation_speed: 0.3
+    
+    # Approach behavior
+    approach_speed: 0.5
+    approach_distance_threshold: 2.0
+    
+    # Alignment behavior
+    alignment_threshold: 0.15
+    alignment_max_time: 15.0
+    
+    # Bumping behavior
+    bump_speed: 0.6
+    bump_distance_threshold: 0.8
+    bump_duration: 4.0
+    
+    # Verification
+    verification_time: 2.0
+    
+    # Safety
+    max_mission_time: 999999.0

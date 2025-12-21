@@ -34,6 +34,9 @@ install(PROGRAMS
   scripts/simple_thruster_mapper.py
   scripts/qualification_detector_node.py
   scripts/qualification_navigator_node.py
+  scripts/flare_detector_node.py
+  scripts/flare_navigator_node.py
+  scripts/task_coordinator_node.py
   scripts/demo.py
   DESTINATION lib/${PROJECT_NAME})
 
