@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""
+Improved Autonomous Navigation for White Gate
+Optimized detection and smooth control for 1.5m x 1.5m white gate at 1m distance
+"""
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from cv_bridge import CvBridge, CvBridgeError
+import cv2
+import numpy as np
+import math
+
+
+class ImprovedWhiteGateNavigator(Node):
+    def __init__(self):
+        super().__init__('white_gate_navigator')
+        
+        self.bridge = CvBridge()
+        
+        # Vision settings
+        self.FRAME_WIDTH = 1280
+        self.FRAME_HEIGHT = 720
+        self.CENTER_X = self.FRAME_WIDTH // 2
+        self.CENTER_Y = self.FRAME_HEIGHT // 2
+        
+        # White detection HSV range (optimized for bright white/off-white)
+        self.LOWER_WHITE = np.array([0, 0, 200])
+        self.UPPER_WHITE = np.array([180, 30, 255])
+        
+        # Detection parameters
+        self.MIN_DETECT_AREA = 1500  # Minimum contour area
+        self.APPROACH_DISTANCE_AREA = 80000  # When gate is close enough
+        
+        # Control gains (smooth and stable)
+        self.K_SWAY = 0.008      # Horizontal alignment
+        self.K_HEAVE = 0.006     # Vertical alignment
+        self.K_SURGE = 0.3       # Forward speed
+        
+        # State machine
+        self.SEARCHING = 0
+        self.APPROACHING = 1
+        self.ALIGNING = 2
+        self.PASSING = 3
+        self.COMPLETED = 4
+        
+        self.state = self.SEARCHING
+        self.state_start_time = None
+        
+        # State variables
+        self.gate_detected = False
+        self.gate_cx = 0
+        self.gate_cy = 0
+        self.gate_area = 0
+        self.mission_active = True
+        
+        # Position tracking
+        self.start_position = None
+        self.current_position = None
+        self.passing_start_x = None
+        
+        # Subscriptions
+        self.camera_sub = self.create_subscription(
+            Image,
+            '/orca4_ign/front_left/image_raw',
+            self.camera_callback,
+            10
+        )
+        
+        self.odom_sub = self.create_subscription(
+            Odometry,
+            '/ground_truth/odom',
+            self.odom_callback,
+            10
+        )
+        
+        # Publishers
+        self.cmd_vel_pub = self.create_publisher(Twist, '/rp2040/cmd_vel', 10)
+        self.debug_image_pub = self.create_publisher(Image, '/autonomous/debug_image', 10)
+        
+        # Control loop timer (20 Hz)
+        self.control_timer = self.create_timer(0.05, self.control_loop)
+        
+        self.get_logger().info('='*70)
+        self.get_logger().info('🤖 IMPROVED AUTONOMOUS WHITE GATE NAVIGATOR')
+        self.get_logger().info('='*70)
+        self.get_logger().info(f'Frame Size: {self.FRAME_WIDTH}x{self.FRAME_HEIGHT}')
+        self.get_logger().info(f'Gate Detection: White/Off-white (HSV filtered)')
+        self.get_logger().info(f'Control: Sway={self.K_SWAY}, Heave={self.K_HEAVE}, Surge={self.K_SURGE}')
+        self.get_logger().info('='*70)
+    
+    def odom_callback(self, msg):
+        """Track robot position"""
+        self.current_position = msg.pose.pose.position
+        
+        if self.start_position is None:
+            self.start_position = self.current_position
+            self.get_logger().info(
+                f'📍 Start: X={self.current_position.x:.2f}, '
+                f'Y={self.current_position.y:.2f}, Z={self.current_position.z:.2f}'
+            )
+    
+    def detect_white_gate(self, cv_image):
+        """
+        Detect white gate using HSV filtering
+        Returns: (detected, center_x, center_y, area, debug_image)
+        """
+        # Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(cv_image, (11, 11), 0)
+        
+        # Convert to HSV
+        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+        
+        # Create white mask
+        mask = cv2.inRange(hsv, self.LOWER_WHITE, self.UPPER_WHITE)
+        
+        # Morphological operations
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=1)
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Debug visualization
+        debug_img = cv_image.copy()
+        mask_colored = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        debug_img = cv2.addWeighted(debug_img, 0.7, mask_colored, 0.3, 0)
+        
+        # Draw crosshair
+        cv2.line(debug_img, (self.CENTER_X, 0), (self.CENTER_X, self.FRAME_HEIGHT), (0, 255, 255), 2)
+        cv2.line(debug_img, (0, self.CENTER_Y), (self.FRAME_WIDTH, self.CENTER_Y), (0, 255, 255), 2)
+        
+        if not contours:
+            cv2.putText(debug_img, 'SEARCHING FOR GATE...', (10, 40),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            return False, 0, 0, 0, debug_img
+        
+        # Find largest white contour (the gate)
+        largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
+        
+        if area < self.MIN_DETECT_AREA:
+            cv2.putText(debug_img, 'OBJECT TOO SMALL', (10, 40),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+            return False, 0, 0, 0, debug_img
+        
+        # Calculate center
+        M = cv2.moments(largest_contour)
+        if M["m00"] == 0:
+            return False, 0, 0, 0, debug_img
+        
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+        
+        # Get bounding box
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Draw detection
+        cv2.drawContours(debug_img, [largest_contour], -1, (0, 255, 0), 3)
+        cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.circle(debug_img, (cx, cy), 10, (0, 0, 255), -1)
+        cv2.line(debug_img, (self.CENTER_X, self.CENTER_Y), (cx, cy), (255, 0, 255), 2)
+        
+        # Annotations
+        cv2.putText(debug_img, '🎯 GATE DETECTED', (x, y - 60),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        cv2.putText(debug_img, f'Area: {int(area)} px', (x, y - 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Error display
+        error_x = cx - self.CENTER_X
+        error_y = cy - self.CENTER_Y
+        cv2.putText(debug_img, f'Error X: {error_x:+d} px', (10, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(debug_img, f'Error Y: {error_y:+d} px', (10, 70),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        # Distance indicator
+        if area < 20000:
+            dist_text = "FAR"
+            color = (0, 0, 255)
+        elif area < 50000:
+            dist_text = "MEDIUM"
+            color = (0, 165, 255)
+        elif area < self.APPROACH_DISTANCE_AREA:
+            dist_text = "CLOSE"
+            color = (0, 255, 255)
+        else:
+            dist_text = "VERY CLOSE!"
+            color = (0, 255, 0)
+        
+        cv2.putText(debug_img, f'Distance: {dist_text}', (10, 100),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        
+        return True, cx, cy, area, debug_img
+    
+    def camera_callback(self, msg):
+        """Process camera image"""
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            
+            # Detect gate
+            detected, cx, cy, area, debug_img = self.detect_white_gate(cv_image)
+            
+            # Update state
+            self.gate_detected = detected
+            if detected:
+                self.gate_cx = cx
+                self.gate_cy = cy
+                self.gate_area = area
+            
+            # Add state info to debug image
+            state_names = ['SEARCHING', 'APPROACHING', 'ALIGNING', 'PASSING', 'COMPLETED']
+            cv2.putText(debug_img, f'State: {state_names[self.state]}', (10, 130),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            
+            # Publish debug image
+            try:
+                debug_msg = self.bridge.cv2_to_imgmsg(debug_img, encoding='bgr8')
+                debug_msg.header = msg.header
+                self.debug_image_pub.publish(debug_msg)
+            except CvBridgeError:
+                pass
+                
+        except CvBridgeError as e:
+            self.get_logger().error(f'CV Bridge error: {str(e)}')
+    
+    def control_loop(self):
+        """Main control state machine"""
+        
+        if not self.mission_active:
+            self.stop()
+            return
+        
+        cmd = Twist()
+        
+        if self.state == self.SEARCHING:
+            cmd = self.searching_behavior(cmd)
+        elif self.state == self.APPROACHING:
+            cmd = self.approaching_behavior(cmd)
+        elif self.state == self.ALIGNING:
+            cmd = self.aligning_behavior(cmd)
+        elif self.state == self.PASSING:
+            cmd = self.passing_behavior(cmd)
+        elif self.state == self.COMPLETED:
+            cmd = self.completed_behavior(cmd)
+        
+        self.cmd_vel_pub.publish(cmd)
+    
+    def searching_behavior(self, cmd):
+        """Search for gate with slow forward movement"""
+        if self.gate_detected:
+            self.get_logger().info('🎯 Gate detected! Transitioning to APPROACHING')
+            self.transition_to(self.APPROACHING)
+            return cmd
+        
+        cmd.linear.x = 0.2  # Slow forward search
+        cmd.linear.z = 0.0
+        cmd.angular.z = 0.0
+        
+        return cmd
+    
+    def approaching_behavior(self, cmd):
+        """Approach gate with basic alignment"""
+        if not self.gate_detected:
+            self.get_logger().warn('Gate lost! Returning to SEARCHING')
+            self.transition_to(self.SEARCHING)
+            return cmd
+        
+        # Check if close enough to align
+        if self.gate_area > 30000:
+            self.get_logger().info('📍 Close enough! Transitioning to ALIGNING')
+            self.transition_to(self.ALIGNING)
+            return cmd
+        
+        # Calculate alignment errors
+        error_x = self.gate_cx - self.CENTER_X
+        error_y = self.gate_cy - self.CENTER_Y
+        
+        # Control commands
+        cmd.linear.x = self.K_SURGE  # Constant forward speed
+        cmd.linear.y = error_x * self.K_SWAY  # Horizontal alignment
+        cmd.linear.z = -error_y * self.K_HEAVE  # Vertical alignment
+        cmd.angular.z = 0.0
+        
+        return cmd
+    
+    def aligning_behavior(self, cmd):
+        """Precise alignment before passing through gate"""
+        if not self.gate_detected:
+            self.get_logger().warn('Gate lost during alignment!')
+            self.transition_to(self.SEARCHING)
+            return cmd
+        
+        # Calculate errors
+        error_x = self.gate_cx - self.CENTER_X
+        error_y = self.gate_cy - self.CENTER_Y
+        
+        # Check alignment quality
+        if abs(error_x) < 50 and abs(error_y) < 50 and self.gate_area > self.APPROACH_DISTANCE_AREA:
+            self.get_logger().info('✅ Aligned! Transitioning to PASSING')
+            self.passing_start_x = self.current_position.x if self.current_position else 0
+            self.transition_to(self.PASSING)
+            return cmd
+        
+        # Precise alignment with slower forward speed
+        cmd.linear.x = 0.15 if self.gate_area < self.APPROACH_DISTANCE_AREA else 0.0
+        cmd.linear.y = error_x * self.K_SWAY * 1.5
+        cmd.linear.z = -error_y * self.K_HEAVE * 1.5
+        cmd.angular.z = 0.0
+        
+        return cmd
+    
+    def passing_behavior(self, cmd):
+        """Pass through gate at full speed"""
+        
+        # Check if we've passed through (traveled 2 meters)
+        if self.current_position and self.passing_start_x is not None:
+            distance_traveled = self.current_position.x - self.passing_start_x
+            
+            if distance_traveled > 2.0:
+                self.get_logger().info('🎉 Gate passed successfully!')
+                self.transition_to(self.COMPLETED)
+                return cmd
+        
+        # Full speed forward, minimal corrections
+        cmd.linear.x = 0.8
+        
+        # Only correct if gate still visible and significantly off-center
+        if self.gate_detected:
+            error_x = self.gate_cx - self.CENTER_X
+            error_y = self.gate_cy - self.CENTER_Y
+            
+            if abs(error_x) > 100:
+                cmd.linear.y = error_x * self.K_SWAY * 0.5
+            if abs(error_y) > 100:
+                cmd.linear.z = -error_y * self.K_HEAVE * 0.5
+        
+        return cmd
+    
+    def completed_behavior(self, cmd):
+        """Mission completed - stop"""
+        self.mission_active = False
+        cmd.linear.x = 0.0
+        cmd.linear.y = 0.0
+        cmd.linear.z = 0.0
+        cmd.angular.z = 0.0
+        
+        self.get_logger().info('='*70)
+        self.get_logger().info('🏆 MISSION COMPLETE!')
+        self.get_logger().info('='*70)
+        
+        return cmd
+    
+    def transition_to(self, new_state):
+        """Transition to new state"""
+        self.state = new_state
+        self.state_start_time = self.get_clock().now()
+    
+    def stop(self):
+        """Emergency stop"""
+        cmd = Twist()
+        self.cmd_vel_pub.publish(cmd)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ImprovedWhiteGateNavigator()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info('🛑 Shutting down gracefully...')
+    finally:
+        node.stop()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

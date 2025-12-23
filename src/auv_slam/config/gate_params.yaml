@@ -1,3 +1,6 @@
+# Location: src/auv_slam/config/gate_params.yaml
+# Gate Navigation Parameters - Safe Depth Control
+
 gate_detector_node:
   ros__parameters:
     # HSV RANGES - Tuned for Gazebo
@@ -12,27 +15,39 @@ gate_detector_node:
     orange_lower: [10, 120, 120]
     orange_upper: [25, 255, 255]
     
-    min_area_strict: 300
-    min_area_relaxed: 80
-    aspect_threshold: 0.8
-    gate_width_meters: 1.5
+    # =========================================================================
+    # CRITICAL: Filtering parameters to reject flares
+    # =========================================================================
+    # Gate posts are 25cm wide blocks (LARGE)
+    # Flares are 1.6cm diameter (THIN)
+    min_area_strict: 500           # Gate blocks are large (>500 pixels)
+    min_area_relaxed: 300          # Relaxed for far distances
+    min_stripe_width_pixels: 20    # CRITICAL: Reject thin flares (<20px)
+    min_aspect_ratio: 1.5          # Taller than wide
+    max_aspect_ratio: 8.0          # But not extremely thin like flares
+    aspect_threshold: 0.8          # Minimum for stripe validation
     
+    gate_width_meters: 1.5
     publish_debug: true
 
 gate_navigator_node:
   ros__parameters:
-    # --- DEPTH SAFETY SETTINGS ---
-    # Pool Floor: -1.6m
-    # Old Target: -1.7m (CRASH RISK)
-    # New Target: -1.0m (Safe middle water column)
-    target_depth: -1.0
+    # =========================================================================
+    # SAFE DEPTH CONTROL
+    # =========================================================================
+    # Pool floor: -1.6m
+    # NEVER GO DEEPER THAN -1.3m
+    target_depth: -1.0          # Safe mission depth (1.0m below surface)
     
     # Depth Control Tuning
-    # Reduced gains to prevent "diving" overshoot
-    depth_correction_gain: 0.8  
-    depth_deadband: 0.15        # Don't react to small errors
+    depth_correction_gain: 1.0  # Moderate gain
+    depth_deadband: 0.15        # Ignore small errors
+    max_depth_limit: -1.35      # HARD LIMIT - never exceed this
     
-    # --- NAVIGATION SPEEDS ---
+    # Vertical speed limits
+    max_vertical_speed: 0.4     # Limit vertical movement to 0.4 m/s
+    
+    # Navigation Speeds
     search_forward_speed: 0.4
     search_rotation_speed: 0.15
     
@@ -55,7 +70,7 @@ gate_navigator_node:
     
     # Passing
     passing_trigger_distance: 1.2
-    passing_speed: 1.0  # Reduced slightly to maintain control
+    passing_speed: 1.0
     gate_width: 1.5
     
     # Flare Avoidance
