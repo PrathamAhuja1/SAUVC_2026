@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FIXED Autonomous White Gate Navigation Launch File
-Includes debugging output and proper spawning
+IMPROVED Autonomous White Gate Navigation Launch File
+With better camera bridge and diagnostics
 """
 
 import os
@@ -17,9 +17,7 @@ import launch_ros.descriptions
 def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
     
-    # ========================================================================
-    # PATHS
-    # ========================================================================
+    # Paths
     urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
     rviz_config = os.path.join(auv_slam_share, 'rviz', 'urdf_config.rviz')
     bridge_config = os.path.join(auv_slam_share, 'config', 'ign_bridge.yaml')
@@ -27,26 +25,23 @@ def generate_launch_description():
     world_file = os.path.join(auv_slam_share, 'worlds', 'white_gate_autonomous.sdf')
     
     print("="*70)
-    print("AUTONOMOUS WHITE GATE NAVIGATION - LAUNCH")
+    print("🤖 AUTONOMOUS WHITE GATE NAVIGATION - IMPROVED LAUNCH")
     print("="*70)
-    print(f"World file: {world_file}")
-    print(f"URDF file: {urdf_file}")
-    print(f"Bridge config: {bridge_config}")
+    print(f"World: {world_file}")
+    print(f"URDF: {urdf_file}")
+    print(f"Bridge: {bridge_config}")
     print("="*70)
     
-    # Check if files exist
-    if not os.path.exists(world_file):
-        print(f"ERROR: World file not found at {world_file}")
-        print("Please ensure white_gate_autonomous.sdf is in the worlds directory")
-        return LaunchDescription([])
+    # Verify files exist
+    for file_path, name in [(world_file, "World"), (urdf_file, "URDF")]:
+        if not os.path.exists(file_path):
+            print(f"❌ ERROR: {name} file not found: {file_path}")
+            return LaunchDescription([])
     
-    if not os.path.exists(urdf_file):
-        print(f"ERROR: URDF file not found at {urdf_file}")
-        return LaunchDescription([])
+    print("✅ All files found")
+    print("="*70)
     
-    # ========================================================================
-    # GAZEBO ENVIRONMENT SETUP
-    # ========================================================================
+    # Gazebo environment
     gz_models_path = os.path.join(auv_slam_share, "models")
     gz_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", default="")
     gz_env = {
@@ -60,19 +55,14 @@ def generate_launch_description():
            ':'.join([gz_resource_path, gz_models_path])
     }
     
-    print(f"Gazebo models path: {gz_models_path}")
-    print("="*70)
-    
-    # ========================================================================
-    # LAUNCH ARGUMENTS
-    # ========================================================================
+    # Launch arguments
     declare_enable_rviz = DeclareLaunchArgument(
         'enable_rviz',
         default_value='false',
-        description='Launch RViz for visualization'
+        description='Launch RViz'
     )
     
-    declare_enable_debug_view = DeclareLaunchArgument(
+    declare_enable_debug = DeclareLaunchArgument(
         'enable_debug_view',
         default_value='true',
         description='Launch debug image viewer'
@@ -81,12 +71,8 @@ def generate_launch_description():
     declare_verbose = DeclareLaunchArgument(
         'verbose',
         default_value='true',
-        description='Enable verbose output'
+        description='Verbose output'
     )
-    
-    # ========================================================================
-    # CORE SIMULATION NODES
-    # ========================================================================
     
     # 1. Robot State Publisher
     robot_state_publisher = Node(
@@ -110,7 +96,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
     
-    # 3. Gazebo Simulator (with verbose output)
+    # 3. Gazebo Simulator
     gazebo_process = ExecuteProcess(
         cmd=['ign', 'gazebo', '-r', '-v', '4', world_file],
         output='screen',
@@ -118,7 +104,7 @@ def generate_launch_description():
         shell=False
     )
     
-    # 4. Spawn Robot Entity (Delayed 3 seconds for Gazebo to fully start)
+    # 4. Spawn Robot (3s delay)
     spawn_entity = TimerAction(
         period=3.0,
         actions=[
@@ -139,7 +125,7 @@ def generate_launch_description():
         ]
     )
     
-    # 5. ROS-Gazebo Bridge (Delayed 4 seconds)
+    # 5. ROS-Gazebo Bridge (4s delay)
     bridge = TimerAction(
         period=4.0,
         actions=[
@@ -156,11 +142,23 @@ def generate_launch_description():
         ]
     )
     
-    # ========================================================================
-    # CONTROL NODES
-    # ========================================================================
+    # 6. Additional image bridge for front_left camera (5s delay)
+    # This ensures the camera topic is properly bridged
+    camera_bridge = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='ros_gz_image',
+                executable='image_bridge',
+                name='front_left_camera_bridge',
+                arguments=['/front_left/image_raw'],
+                output='screen',
+                parameters=[{'use_sim_time': True}]
+            )
+        ]
+    )
     
-    # 6. Thruster Mapper (Delayed 5 seconds)
+    # 7. Thruster Mapper (5s delay)
     thruster_mapper = TimerAction(
         period=5.0,
         actions=[
@@ -174,13 +172,13 @@ def generate_launch_description():
         ]
     )
     
-    # 7. Autonomous Navigation Node (Delayed 7 seconds)
+    # 8. Autonomous Navigation (7s delay)
     autonomous_nav = TimerAction(
         period=7.0,
         actions=[
             Node(
                 package='auv_slam',
-                executable='improved_white_gate_nav.py',
+                executable='white_gate_navigator.py',
                 name='autonomous_navigator',
                 output='screen',
                 parameters=[{'use_sim_time': True}]
@@ -188,11 +186,20 @@ def generate_launch_description():
         ]
     )
     
-    # ========================================================================
-    # VISUALIZATION NODES
-    # ========================================================================
+    # 9. Camera diagnostics (6s delay)
+    camera_diagnostics = TimerAction(
+        period=6.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'topic', 'hz', '/front_left/image_raw'],
+                name='camera_hz_check',
+                output='screen',
+                shell=False
+            )
+        ]
+    )
     
-    # 8. RViz (Optional)
+    # 10. RViz (Optional)
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -203,7 +210,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('enable_rviz'))
     )
     
-    # 9. Debug Image Viewer (Delayed 8 seconds)
+    # 11. Debug Image Viewer (8s delay)
     debug_viewer = TimerAction(
         period=8.0,
         actions=[
@@ -219,28 +226,27 @@ def generate_launch_description():
         ]
     )
     
-    # ========================================================================
-    # LAUNCH DESCRIPTION
-    # ========================================================================
+    # Launch sequence
     return LaunchDescription([
-        # Launch arguments
+        # Arguments
         declare_enable_rviz,
-        declare_enable_debug_view,
+        declare_enable_debug,
         declare_verbose,
         
-        # Core simulation (immediate start)
+        # Core (immediate)
         robot_state_publisher,
         joint_state_publisher,
         gazebo_process,
         
-        # Timed launches with longer delays
-        spawn_entity,       # 3s delay
-        bridge,             # 4s delay
-        thruster_mapper,    # 5s delay
-        autonomous_nav,     # 7s delay
-        debug_viewer,       # 8s delay
+        # Timed launches
+        spawn_entity,        # 3s
+        bridge,              # 4s
+        camera_bridge,       # 5s - CRITICAL for camera
+        thruster_mapper,     # 5s
+        autonomous_nav,      # 7s
+        debug_viewer,        # 8s
         
-        # Optional visualization
+        # Optional
         rviz_node,
     ])
 
