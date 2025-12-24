@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-IMPROVED Autonomous White Gate Navigation Launch File
-With better camera bridge and diagnostics
+FIXED Autonomous White Gate Navigation Launch File
+Properly configured for orca4 robot
 """
 
 import os
@@ -18,18 +18,17 @@ def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
     
     # Paths
-    urdf_file = os.path.join(auv_slam_share, 'urdf', 'varuna_description.urdf')
+    urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
     rviz_config = os.path.join(auv_slam_share, 'rviz', 'urdf_config.rviz')
     bridge_config = os.path.join(auv_slam_share, 'config', 'ign_bridge.yaml')
     thruster_params = os.path.join(auv_slam_share, 'config', 'thruster_params.yaml')
     world_file = os.path.join(auv_slam_share, 'worlds', 'white_gate_autonomous.sdf')
     
     print("="*70)
-    print("🤖 AUTONOMOUS WHITE GATE NAVIGATION - IMPROVED LAUNCH")
+    print("🤖 AUTONOMOUS WHITE GATE NAVIGATION - FIXED")
     print("="*70)
     print(f"World: {world_file}")
     print(f"URDF: {urdf_file}")
-    print(f"Bridge: {bridge_config}")
     print("="*70)
     
     # Verify files exist
@@ -68,12 +67,6 @@ def generate_launch_description():
         description='Launch debug image viewer'
     )
     
-    declare_verbose = DeclareLaunchArgument(
-        'verbose',
-        default_value='true',
-        description='Verbose output'
-    )
-    
     # 1. Robot State Publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -98,13 +91,13 @@ def generate_launch_description():
     
     # 3. Gazebo Simulator
     gazebo_process = ExecuteProcess(
-        cmd=['ign', 'gazebo', '-r', '-v', '4', world_file],
+        cmd=['ign', 'gazebo', '-r', '-v', '3', world_file],
         output='screen',
         additional_env=gz_env,
         shell=False
     )
     
-    # 4. Spawn Robot (3s delay)
+    # 4. Spawn Robot (3s delay) - UNDERWATER at correct position
     spawn_entity = TimerAction(
         period=3.0,
         actions=[
@@ -113,10 +106,10 @@ def generate_launch_description():
                 executable="create",
                 output="screen",
                 arguments=[
-                    "-name", "varuna",
+                    "-name", "orca4_ign",
                     "-topic", "robot_description",
-                    "-z", "0.3",
-                    "-x", "0.0",
+                    "-z", "-0.3",      # Underwater
+                    "-x", "0.0",       # In front of gate
                     "-y", "0.0",
                     "-Y", "0.0",
                 ],
@@ -133,8 +126,21 @@ def generate_launch_description():
                 package="ros_gz_bridge",
                 executable="parameter_bridge",
                 arguments=[
-                    '--ros-args',
-                    '-p', f'config_file:={bridge_config}'
+                    '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
+                    '/demo/imu@sensor_msgs/msg/Imu[ignition.msgs.IMU',
+                    '/camera_forward/image_raw@sensor_msgs/msg/Image[ignition.msgs.Image',
+                    '/camera_forward/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo',
+                    '/model/orca4_ign/odometry@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
+                    '/thruster1_cmd@std_msgs/msg/Float64]ignition.msgs.Double',
+                    '/thruster2_cmd@std_msgs/msg/Float64]ignition.msgs.Double',
+                    '/thruster3_cmd@std_msgs/msg/Float64]ignition.msgs.Double',
+                    '/thruster4_cmd@std_msgs/msg/Float64]ignition.msgs.Double',
+                    '/thruster5_cmd@std_msgs/msg/Float64]ignition.msgs.Double',
+                    '/thruster6_cmd@std_msgs/msg/Float64]ignition.msgs.Double',
+                ],
+                remappings=[
+                    ('/model/orca4_ign/odometry', '/ground_truth/odom'),
+                    ('/camera_forward/image_raw', '/front_left/image_raw'),
                 ],
                 output='screen',
                 parameters=[{'use_sim_time': True}]
@@ -142,23 +148,7 @@ def generate_launch_description():
         ]
     )
     
-    # 6. Additional image bridge for front_left camera (5s delay)
-    # This ensures the camera topic is properly bridged
-    camera_bridge = TimerAction(
-        period=5.0,
-        actions=[
-            Node(
-                package='ros_gz_image',
-                executable='image_bridge',
-                name='front_left_camera_bridge',
-                arguments=['/front_left/image_raw'],
-                output='screen',
-                parameters=[{'use_sim_time': True}]
-            )
-        ]
-    )
-    
-    # 7. Thruster Mapper (5s delay)
+    # 6. Thruster Mapper (5s delay)
     thruster_mapper = TimerAction(
         period=5.0,
         actions=[
@@ -172,7 +162,7 @@ def generate_launch_description():
         ]
     )
     
-    # 8. Autonomous Navigation (7s delay)
+    # 7. Autonomous Navigation (7s delay)
     autonomous_nav = TimerAction(
         period=7.0,
         actions=[
@@ -186,20 +176,7 @@ def generate_launch_description():
         ]
     )
     
-    # 9. Camera diagnostics (6s delay)
-    camera_diagnostics = TimerAction(
-        period=6.0,
-        actions=[
-            ExecuteProcess(
-                cmd=['ros2', 'topic', 'hz', '/front_left/image_raw'],
-                name='camera_hz_check',
-                output='screen',
-                shell=False
-            )
-        ]
-    )
-    
-    # 10. RViz (Optional)
+    # 8. RViz (Optional)
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -210,7 +187,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('enable_rviz'))
     )
     
-    # 11. Debug Image Viewer (8s delay)
+    # 9. Debug Image Viewer (8s delay)
     debug_viewer = TimerAction(
         period=8.0,
         actions=[
@@ -231,7 +208,6 @@ def generate_launch_description():
         # Arguments
         declare_enable_rviz,
         declare_enable_debug,
-        declare_verbose,
         
         # Core (immediate)
         robot_state_publisher,
@@ -241,7 +217,6 @@ def generate_launch_description():
         # Timed launches
         spawn_entity,        # 3s
         bridge,              # 4s
-        camera_bridge,       # 5s - CRITICAL for camera
         thruster_mapper,     # 5s
         autonomous_nav,      # 7s
         debug_viewer,        # 8s
