@@ -1,0 +1,760 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot
+  name="varuna_sauvc2026">
+  <link
+    name="main_body">
+    <inertial>
+      <origin
+        xyz="-0.00133844951019563 0.00142302625803412 -0.00856794511139811"
+        rpy="0 0 0" />
+      <mass
+        value="8.54876356572109" />
+      <inertia
+        ixx="0.0861050860354291"
+        ixy="3.74532440129085E-07"
+        ixz="-1.71005714104358E-06"
+        iyy="0.16694958853069"
+        iyz="1.19817658545192E-06"
+        izz="0.154556597108588" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/main_body.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 0.35" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/main_body.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="front_right_thrust">
+    <inertial>
+      <origin
+        xyz="-0.00924888000924677 0.00774059913325172 0.00312987648179264"
+        rpy="0 0 0" />
+      <mass
+        value="0.237469837498383" />
+      <inertia
+        ixx="0.000184468577429034"
+        ixy="-8.14105089157379E-09"
+        ixz="-3.37503020099821E-05"
+        iyy="0.000261321811440248"
+        iyz="1.66942955602575E-07"
+        izz="0.000163904603263473" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/front_right_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/front_right_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="front_right_joint"
+    type="revolute">
+    <origin
+      xyz="0.23086 0.15946 0.030788"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="front_right_thrust" />
+    <axis
+      xyz="0 1 0" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="front_left_thrust">
+    <inertial>
+      <origin
+        xyz="0.00919072238475643 0.00774059864018913 0.00318132157450068"
+        rpy="0 0 0" />
+      <mass
+        value="0.237469853114495" />
+      <inertia
+        ixx="0.000184602045772302"
+        ixy="1.88330506617765E-07"
+        ixz="3.37667113816483E-05"
+        iyy="0.000261321821821608"
+        iyz="5.51599980993291E-08"
+        izz="0.000163771165503046" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/front_left_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/front_left_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="front_left_joint"
+    type="revolute">
+    <origin
+      xyz="0.23086 -0.16011 0.030788"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="front_left_thrust" />
+    <axis
+      xyz="0 1 0" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="back_right_thrust">
+    <inertial>
+      <origin
+        xyz="-0.00919072156312157 0.00774060048714177 -0.00318132167556116"
+        rpy="0 0 0" />
+      <mass
+        value="0.23746984384368" />
+      <inertia
+        ixx="0.000184602036093544"
+        ixy="-1.88322406575791E-07"
+        ixz="3.37667096840675E-05"
+        iyy="0.000261321817426548"
+        iyz="-5.51656223565005E-08"
+        izz="0.000163771149198568" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/back_right_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/back_right_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="back_right_joint"
+    type="revolute">
+    <origin
+      xyz="-0.23288 0.15946 0.030788"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="back_right_thrust" />
+    <axis
+      xyz="0 1 0" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="back_left_thrust">
+    <inertial>
+      <origin
+        xyz="0.00924888010598829 0.0077405991828577 -0.00312987657381268"
+        rpy="0 0 0" />
+      <mass
+        value="0.237469836698007" />
+      <inertia
+        ixx="0.000184468571623336"
+        ixy="8.14299795125638E-09"
+        ixz="-3.37503015347305E-05"
+        iyy="0.000261321809327157"
+        iyz="-1.66941370539825E-07"
+        izz="0.000163904597449378" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/back_left_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.250980392156863 0.250980392156863 0.250980392156863 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/back_left_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="back_left_joint"
+    type="revolute">
+    <origin
+      xyz="-0.23288 -0.16011 0.030788"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="back_left_thrust" />
+    <axis
+      xyz="0 1 0" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="surge_right_thrust">
+    <inertial>
+      <origin
+        xyz="-0.00441314601928681 6.56643430185788E-08 0.000148042274560944"
+        rpy="0 0 0" />
+      <mass
+        value="2.33309154088955" />
+      <inertia
+        ixx="0.00326697736792286"
+        ixy="-2.53182221829006E-10"
+        ixz="6.05442835369929E-06"
+        iyy="0.00369958442187225"
+        iyz="-4.21998798824198E-07"
+        izz="0.00255837513591151" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/surge_right_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.949019607843137 0.909803921568627 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/surge_right_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="surge_right_joint"
+    type="revolute">
+    <origin
+      xyz="-0.0026231 0.15668 -0.0061679"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="surge_right_thrust" />
+    <axis
+      xyz="0 -0.00036981 -1" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="surge_left_thrust">
+    <inertial>
+      <origin
+        xyz="0.00441323204102717 -8.53313966708846E-09 0.000148042315100183"
+        rpy="0 0 0" />
+      <mass
+        value="2.33309146586728" />
+      <inertia
+        ixx="0.00326697732662409"
+        ixy="-2.50251686691933E-09"
+        ixz="-6.0522854482408E-06"
+        iyy="0.0036995845914223"
+        iyz="-3.53095880386809E-11"
+        izz="0.00255837495631853" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/surge_left_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.949019607843137 0.909803921568627 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/surge_left_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="surge_left_joint"
+    type="revolute">
+    <origin
+      xyz="-0.0026267 -0.15732 -0.0061685"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="surge_left_thrust" />
+    <axis
+      xyz="0 0 -1" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="sway_front_thrust">
+    <inertial>
+      <origin
+        xyz="-0.00142695277390642 -7.91877245550493E-07 0.00328532681969185"
+        rpy="0 0 0" />
+      <mass
+        value="0.198197963752939" />
+      <inertia
+        ixx="0.000180391091377813"
+        ixy="4.07441171924944E-09"
+        ixz="3.02573691263544E-07"
+        iyy="0.000134875054424953"
+        iyz="-7.20714200377398E-08"
+        izz="0.000131343314203125" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/sway_front_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/sway_front_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="sway_thrust_joint"
+    type="revolute">
+    <origin
+      xyz="0.13444 -0.010256 0.11288"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="sway_front_thrust" />
+    <axis
+      xyz="-1 0 0" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="sway_back_thrust">
+    <inertial>
+      <origin
+        xyz="0.00142695277405866 -7.91874609759602E-07 -0.0032853268140359"
+        rpy="0 0 0" />
+      <mass
+        value="0.198197963747123" />
+      <inertia
+        ixx="0.00018039109182722"
+        ixy="-4.07382692121961E-09"
+        ixz="3.02573737047448E-07"
+        iyy="0.000134875055612333"
+        iyz="7.20713779008338E-08"
+        izz="0.000131343315640529" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/sway_back_thrust.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/sway_back_thrust.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="sway_back_joint"
+    type="revolute">
+    <origin
+      xyz="-0.14484 0.0096085 0.12117"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="sway_back_thrust" />
+    <axis
+      xyz="1 0 0" />
+    <limit lower="-1e+12" upper="1e+12" effort="-1" velocity="-1"/>
+  </joint>
+  <link
+    name="front_camera_link">
+    <inertial>
+      <origin
+        xyz="-4.71844785465692E-16 0.00842530475112046 -0.0304318799773825"
+        rpy="0 0 0" />
+      <mass
+        value="0.0892162118595124" />
+      <inertia
+        ixx="0.000134909655734789"
+        ixy="5.60304396060517E-20"
+        ixz="1.28864696893962E-18"
+        iyy="0.000176365282524399"
+        iyz="1.5349968255688E-05"
+        izz="0.000263056724842559" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/front_camera_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/front_camera_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="front_camera_joint"
+    type="fixed">
+    <origin
+      xyz="0.29049 -0.00032538 0.087131"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="main_body" />
+    <child
+      link="front_camera_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="bottom_camera_link">
+    <inertial>
+      <origin
+        xyz="1.38777878078145E-16 0.0259998751139726 -1.11022302462516E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.101711841335706" />
+      <inertia
+        ixx="0.000105960255637819"
+        ixy="-1.31141138443832E-20"
+        ixz="5.83894540117485E-11"
+        iyy="0.000341902509637751"
+        iyz="1.9625523471386E-20"
+        izz="0.00026488321790626" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/bottom_camera_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://varuna_sauvc2026/meshes/bottom_camera_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="bottom_camera_joint"
+    type="fixed">
+    <origin
+      xyz="-0.000161955480955045 -0.0982963095748839 0.146048074849614"
+      rpy="-1.5707963267949 0 -1.5707963267949" />
+    <parent
+      link="main_body" />
+    <child
+      link="bottom_camera_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+
+  <gazebo>
+    <plugin
+        filename="ignition-gazebo-hydrodynamics-system"
+        name="ignition::gazebo::systems::Hydrodynamics">
+      <link_name>main_body</link_name>
+      <water_density>1000</water_density>
+      <xDotU>0</xDotU>
+      <yDotV>0</yDotV>
+      <zDotW>0</zDotW>
+      <kDotP>0</kDotP>
+      <mDotQ>0</mDotQ>
+      <nDotR>0</nDotR>
+      <xU>-33.8</xU>
+      <yV>-54.2</yV>
+      <zW>-73.3</zW>
+      <kP>-4.0</kP>
+      <mQ>-4.0</mQ>
+      <nR>-4.0</nR>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>front_right_joint</joint_name>
+      <thrust_coefficient>0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>front_left_joint</joint_name>
+      <thrust_coefficient>0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>back_right_joint</joint_name>
+      <thrust_coefficient>-0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>back_left_joint</joint_name>
+      <thrust_coefficient>-0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>surge_right_joint</joint_name>
+      <thrust_coefficient>0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>surge_left_joint</joint_name>
+      <thrust_coefficient>-0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>sway_thrust_joint</joint_name>
+      <thrust_coefficient>0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin filename="ignition-gazebo-thruster-system" name="ignition::gazebo::systems::Thruster">
+      <namespace>varuna</namespace>
+      <joint_name>sway_back_joint</joint_name>
+      <thrust_coefficient>-0.02</thrust_coefficient>
+      <fluid_density>1000</fluid_density>
+      <propeller_diameter>0.1</propeller_diameter>
+      <velocity_control>true</velocity_control>
+      <use_angvel_cmd>True</use_angvel_cmd>
+    </plugin>
+  </gazebo>
+
+  <link name="imu_link">
+  <inertial>
+    <mass value="0.001"/>
+    <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+  </inertial>
+</link>
+
+<joint name="imu_joint" type="fixed">
+  <parent link="main_body"/>
+  <child link="imu_link"/>
+  <origin xyz="0 0 0"/>
+</joint>
+
+<gazebo reference="imu_link">
+  <sensor name="imu_sensor" type="imu">
+    <always_on>true</always_on>
+    <update_rate>100</update_rate>
+    <topic>/demo/imu</topic>
+    <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"/>
+  </sensor>
+</gazebo>
+
+<gazebo reference="front_camera_link">
+  <sensor name="front_camera" type="camera">
+    <camera>
+      <horizontal_fov>1.309</horizontal_fov>
+      <image><width>1280</width><height>720</height></image>
+      <clip><near>0.1</near><far>30</far></clip>
+    </camera>
+    <always_on>1</always_on>
+    <update_rate>30</update_rate>
+    <visualize>true</visualize>
+    <topic>/front_left/image_raw</topic>
+  </sensor>
+</gazebo>
+
+<gazebo reference="bottom_camera_link">
+  <sensor name="bottom_camera" type="camera">
+    <camera>
+      <horizontal_fov>1.955</horizontal_fov>
+      <image><width>1280</width><height>720</height></image>
+      <clip><near>0.1</near><far>30</far></clip>
+    </camera>
+    <always_on>1</always_on>
+    <update_rate>30</update_rate>
+    <topic>/bottom/image_raw</topic>
+  </sensor>
+</gazebo>
+
+<gazebo>
+  <plugin
+    filename="ignition-gazebo-odometry-publisher-system"
+    name="ignition::gazebo::systems::OdometryPublisher">
+    <link_name>main_body</link_name>
+    <odom_publish_topic>/odom</odom_publish_topic>
+    <frame_id>odom</frame_id>
+    <child_frame_id>base_link</child_frame_id>
+    <publish_tf>true</publish_tf>
+  </plugin>
+</gazebo>
+</robot>
