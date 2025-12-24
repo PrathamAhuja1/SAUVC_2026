@@ -18,7 +18,7 @@ def generate_launch_description():
     auv_slam_share = get_package_share_directory('auv_slam')
     auv_slam_prefix = get_package_prefix('auv_slam')
     
-    urdf_file = os.path.join(auv_slam_share, 'urdf', 'orca4_description.urdf')
+    urdf_file = os.path.join(auv_slam_share, 'urdf', 'varuna_description.urdf')
     rviz_config = os.path.join(auv_slam_share, 'rviz', 'urdf_config.rviz')
     bridge_config = os.path.join(auv_slam_share, 'config', 'ign_bridge.yaml')
     thruster_params = os.path.join(auv_slam_share, 'config', 'thruster_params.yaml')
@@ -105,7 +105,7 @@ def generate_launch_description():
                 executable="create",
                 output="screen",
                 arguments=[
-                    "-name", "orca4_ign",
+                    "-name", "varuna",
                     "-topic", "robot_description",
                     "-z", LaunchConfiguration('spawn_z'),
                     "-x", LaunchConfiguration('spawn_x'),

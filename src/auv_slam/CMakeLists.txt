@@ -22,7 +22,7 @@ find_package(Pangolin REQUIRED)
 install(DIRECTORY src launch rviz worlds models config
   DESTINATION share/${PROJECT_NAME})
 
-install(FILES src/description/orca4_description.urdf
+install(FILES src/description/varuna_description.urdf
   DESTINATION share/${PROJECT_NAME}/urdf)
 
 install(PROGRAMS

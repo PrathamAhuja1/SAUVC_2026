@@ -824,7 +824,7 @@
     <!-- Position: X=-10m, Y=0m, Z=-0.8m (0.8m below surface for 1.6m pool)       -->
     <!-- ========================================================================== -->
     <include>
-      <uri>model://auv_slam/models/orca4_ign</uri>
+      <uri>model://auv_slam/models/varuna</uri>
       <pose>-10 0 -0.8 0 0 0</pose>
     </include>
 
