@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""
+CORRECTED White Gate Navigator - Proper Thruster Configuration
+Accounts for negative thrust coefficients on T3, T4, T6
+"""
 
 import rclpy
 from rclpy.node import Node
@@ -11,7 +15,7 @@ import numpy as np
 import math
 
 
-class WhiteGateNavigatorPWM(Node):
+class WhiteGateNavigatorFixed(Node):
     def __init__(self):
         super().__init__('white_gate_navigator')
         
@@ -22,20 +26,25 @@ class WhiteGateNavigatorPWM(Node):
         self.CENTER_X = self.FRAME_WIDTH // 2
         self.CENTER_Y = self.FRAME_HEIGHT // 2
         
+        # HSV range for white gate (bright white)
         self.LOWER_WHITE = np.array([0, 0, 180])
         self.UPPER_WHITE = np.array([180, 40, 255])
         
+        # Detection thresholds
         self.MIN_DETECT_AREA = 800
         self.SMALL_AREA = 10000
         self.MEDIUM_AREA = 30000
         self.LARGE_AREA = 60000
         
+        # PWM constants
         self.PWM_NEUTRAL = 1500
         self.PWM_MIN = 1300
         self.PWM_MAX = 1800
         
+        # Target depth
         self.TARGET_DEPTH = -0.5
         
+        # State machine
         self.SEARCHING = 0
         self.APPROACHING = 1
         self.ALIGNING = 2
@@ -44,6 +53,7 @@ class WhiteGateNavigatorPWM(Node):
         
         self.state = self.SEARCHING
         
+        # Gate detection state
         self.gate_detected = False
         self.gate_cx = 0
         self.gate_cy = 0
@@ -51,17 +61,20 @@ class WhiteGateNavigatorPWM(Node):
         self.mission_active = True
         self.frame_count = 0
         
+        # Position tracking
         self.start_position = None
         self.current_position = None
         self.current_depth = 0.0
         self.passing_start_x = None
         
+        # Subscriptions
         self.camera_sub = self.create_subscription(
             Image, '/front_left/image_raw', self.camera_callback, 10)
         
         self.odom_sub = self.create_subscription(
             Odometry, '/ground_truth/odom', self.odom_callback, 10)
         
+        # Publishers (in URDF order: T1, T2, T3, T4, T5, T6)
         self.thruster_pubs = []
         for i in range(1, 7):
             pub = self.create_publisher(Float64, f'/thruster{i}_cmd', 10)
@@ -69,10 +82,21 @@ class WhiteGateNavigatorPWM(Node):
         
         self.debug_image_pub = self.create_publisher(Image, '/autonomous/debug_image', 10)
         
+        # Control timer
         self.control_timer = self.create_timer(0.05, self.control_loop)
         
-        self.get_logger().info('White Gate Navigator PWM Initialized')
+        self.get_logger().info('=' * 70)
+        self.get_logger().info('White Gate Navigator - CORRECTED Thruster Configuration')
+        self.get_logger().info('=' * 70)
         self.get_logger().info(f'Target Depth: {self.TARGET_DEPTH}m')
+        self.get_logger().info('Thruster Mapping:')
+        self.get_logger().info('  T1: Front-Right (+0.02)')
+        self.get_logger().info('  T2: Front-Left (+0.02)')
+        self.get_logger().info('  T3: Back-Right (-0.02) [NEGATIVE]')
+        self.get_logger().info('  T4: Back-Left (-0.02) [NEGATIVE]')
+        self.get_logger().info('  T5: Vertical-Right (+0.02)')
+        self.get_logger().info('  T6: Vertical-Left (-0.02) [NEGATIVE]')
+        self.get_logger().info('=' * 70)
     
     def odom_callback(self, msg):
         self.current_depth = msg.pose.pose.position.z
@@ -96,14 +120,18 @@ class WhiteGateNavigatorPWM(Node):
         except CvBridgeError:
             return
         
+        # Convert to HSV
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         
+        # Create white mask
         white_mask = cv2.inRange(hsv_image, self.LOWER_WHITE, self.UPPER_WHITE)
         
+        # Morphological operations
         kernel = np.ones((5, 5), np.uint8)
         white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
         white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
         
+        # Find contours
         contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         self.gate_detected = False
@@ -120,6 +148,7 @@ class WhiteGateNavigatorPWM(Node):
                     self.gate_area = area
                     self.gate_detected = True
                     
+                    # Visualization
                     x, y, w, h = cv2.boundingRect(largest_contour)
                     cv2.rectangle(cv_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
                     cv2.circle(cv_image, (self.gate_cx, self.gate_cy), 10, (0, 0, 255), -1)
@@ -127,13 +156,16 @@ class WhiteGateNavigatorPWM(Node):
                     cv2.putText(cv_image, f'Area: {int(area)}', (x, y-10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
+        # Draw center lines
         cv2.line(cv_image, (self.CENTER_X, 0), (self.CENTER_X, self.FRAME_HEIGHT), (255, 0, 0), 2)
         cv2.line(cv_image, (0, self.CENTER_Y), (self.FRAME_WIDTH, self.CENTER_Y), (255, 0, 0), 2)
         
+        # State display
         state_text = ['SEARCHING', 'APPROACHING', 'ALIGNING', 'PASSING', 'COMPLETED'][self.state]
         cv2.putText(cv_image, f'State: {state_text}', (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
+        # Publish debug image
         try:
             debug_msg = self.bridge.cv2_to_imgmsg(cv_image, "bgr8")
             self.debug_image_pub.publish(debug_msg)
@@ -142,12 +174,14 @@ class WhiteGateNavigatorPWM(Node):
     
     def control_loop(self):
         if not self.mission_active or self.current_position is None:
-            self.send_pwm_values(1500, 1500, 1500, 1500, 1500, 1500)
+            self.send_neutral()
             return
         
+        # Depth control
         depth_error = self.TARGET_DEPTH - self.current_depth
         depth_pwm = self.depth_control(depth_error)
         
+        # State machine
         if self.state == self.SEARCHING:
             self.searching_behavior(depth_pwm)
         elif self.state == self.APPROACHING:
@@ -160,72 +194,105 @@ class WhiteGateNavigatorPWM(Node):
             self.completed_behavior()
     
     def depth_control(self, error):
+        """
+        Depth control accounting for T5 (+0.02) and T6 (-0.02)
+        Returns tuple: (t5_pwm, t6_pwm)
+        """
         if abs(error) < 0.1:
-            return 1500
+            return (1500, 1500)
         
-        pwm_range = 200
-        pwm_change = int(error * pwm_range * 2.0)
-        pwm_change = max(-pwm_range, min(pwm_change, pwm_range))
+        # To go DOWN (negative error):
+        #   T5 (+coeff): need LOW PWM
+        #   T6 (-coeff): need HIGH PWM
+        # To go UP (positive error):
+        #   T5 (+coeff): need HIGH PWM
+        #   T6 (-coeff): need LOW PWM
         
-        return 1500 - pwm_change
+        pwm_change = int(abs(error) * 300)
+        pwm_change = min(pwm_change, 200)
+        
+        if error < 0:  # Go DOWN
+            t5_pwm = 1500 - pwm_change  # Lower for T5
+            t6_pwm = 1500 + pwm_change  # Higher for T6
+        else:  # Go UP
+            t5_pwm = 1500 + pwm_change  # Higher for T5
+            t6_pwm = 1500 - pwm_change  # Lower for T6
+        
+        return (t5_pwm, t6_pwm)
     
     def searching_behavior(self, depth_pwm):
+        """Search pattern with proper thruster control"""
         if self.gate_detected:
-            self.get_logger().info('Gate detected - switching to APPROACHING')
+            self.get_logger().info('🎯 Gate detected - switching to APPROACHING')
             self.state = self.APPROACHING
             return
         
-        surge_left_pwm = 1600
-        surge_right_pwm = 1600
-        back_left_pwm = 1400
-        back_right_pwm = 1400
-        forward_left_pwm = 1500
-        forward_right_pwm = 1550
+        # Slow forward motion with rotation
+        # Forward: T1, T2 high; T3, T4 low (because T3, T4 have negative coeffs)
+        t1 = 1550  # Front-Right
+        t2 = 1550  # Front-Left
+        t3 = 1450  # Back-Right (negative coeff)
+        t4 = 1450  # Back-Left (negative coeff)
         
-        self.send_pwm_values(back_left_pwm, forward_right_pwm, surge_left_pwm, 
-                            surge_right_pwm, back_right_pwm, forward_left_pwm)
+        # Add gentle rotation for scanning
+        rotation_pwm = 30
+        t1 += rotation_pwm
+        t3 += rotation_pwm
+        t2 -= rotation_pwm
+        t4 -= rotation_pwm
+        
+        t5, t6 = depth_pwm
+        
+        self.send_thrusters(t1, t2, t3, t4, t5, t6)
     
     def approaching_behavior(self, depth_pwm):
+        """Approach gate with alignment corrections"""
         if not self.gate_detected:
             self.state = self.SEARCHING
             return
         
         if self.gate_area > self.MEDIUM_AREA:
-            self.get_logger().info('Gate close enough - switching to ALIGNING')
+            self.get_logger().info('📍 Gate close - switching to ALIGNING')
             self.state = self.ALIGNING
             return
         
+        # Calculate horizontal error
         horizontal_error = self.gate_cx - self.CENTER_X
         
-        speed_factor = 1.0
+        # Base forward speed (adaptive to distance)
         if self.gate_area < self.SMALL_AREA:
-            speed_factor = 1.3
-        elif self.gate_area < self.MEDIUM_AREA:
-            speed_factor = 1.0
+            base_speed = 100  # Far away - faster
+        else:
+            base_speed = 70   # Getting closer - slower
         
-        base_forward = int(1500 + 150 * speed_factor)
-        base_backward = int(1500 - 150 * speed_factor)
+        # Forward motion base
+        t1 = 1500 + base_speed  # Front-Right
+        t2 = 1500 + base_speed  # Front-Left
+        t3 = 1500 - base_speed  # Back-Right (negative coeff)
+        t4 = 1500 - base_speed  # Back-Left (negative coeff)
         
+        # Apply yaw correction
         yaw_correction = int(horizontal_error * 0.3)
-        yaw_correction = max(-100, min(yaw_correction, 100))
+        yaw_correction = max(-80, min(yaw_correction, 80))
         
-        surge_left_pwm = base_forward
-        surge_right_pwm = base_forward
-        back_left_pwm = base_backward - yaw_correction
-        back_right_pwm = base_backward + yaw_correction
-        forward_left_pwm = 1500 - yaw_correction
-        forward_right_pwm = 1500 + yaw_correction
+        # For right turn (positive error): T1, T3 backward; T2, T4 forward
+        t1 -= yaw_correction
+        t3 -= yaw_correction
+        t2 += yaw_correction
+        t4 += yaw_correction
         
-        self.send_pwm_values(back_left_pwm, forward_right_pwm, surge_left_pwm, 
-                            surge_right_pwm, back_right_pwm, forward_left_pwm)
+        t5, t6 = depth_pwm
+        
+        self.send_thrusters(t1, t2, t3, t4, t5, t6)
     
     def aligning_behavior(self, depth_pwm):
+        """Fine alignment at close range"""
         if not self.gate_detected:
             self.state = self.SEARCHING
             return
         
         if self.gate_area > self.LARGE_AREA:
-            self.get_logger().info('Gate very close - switching to PASSING')
+            self.get_logger().info('🚀 Gate very close - PASSING!')
             self.state = self.PASSING
             self.passing_start_x = self.current_position[0]
             return
@@ -233,81 +300,101 @@ class WhiteGateNavigatorPWM(Node):
         horizontal_error = self.gate_cx - self.CENTER_X
         
         if abs(horizontal_error) < 80:
-            slow_forward = 1550
-            slow_backward = 1450
-            
-            surge_left_pwm = slow_forward
-            surge_right_pwm = slow_forward
-            back_left_pwm = slow_backward
-            back_right_pwm = slow_backward
-            forward_left_pwm = 1500
-            forward_right_pwm = 1500
+            # Well aligned - slow forward creep
+            t1 = 1530
+            t2 = 1530
+            t3 = 1470
+            t4 = 1470
         else:
+            # Need alignment - rotate with minimal forward
             yaw_correction = int(horizontal_error * 0.5)
-            yaw_correction = max(-120, min(yaw_correction, 120))
+            yaw_correction = max(-100, min(yaw_correction, 100))
             
-            surge_left_pwm = 1520
-            surge_right_pwm = 1520
-            back_left_pwm = 1480 - yaw_correction
-            back_right_pwm = 1480 + yaw_correction
-            forward_left_pwm = 1500 - yaw_correction
-            forward_right_pwm = 1500 + yaw_correction
+            t1 = 1510 - yaw_correction
+            t2 = 1510 + yaw_correction
+            t3 = 1490 - yaw_correction
+            t4 = 1490 + yaw_correction
         
-        self.send_pwm_values(back_left_pwm, forward_right_pwm, surge_left_pwm, 
-                            surge_right_pwm, back_right_pwm, forward_left_pwm)
+        t5, t6 = depth_pwm
+        
+        self.send_thrusters(t1, t2, t3, t4, t5, t6)
     
     def passing_behavior(self, depth_pwm):
+        """Full speed through gate"""
         if self.passing_start_x is None:
             self.passing_start_x = self.current_position[0]
         
         distance_traveled = self.current_position[0] - self.passing_start_x
         
         if distance_traveled > 3.5:
-            self.get_logger().info('Passed through gate - MISSION COMPLETE')
+            self.get_logger().info('✅ GATE PASSED - Mission Complete!')
             self.state = self.COMPLETED
             self.mission_active = False
             return
         
-        full_forward = 1700
-        full_backward = 1300
+        # Maximum forward thrust
+        t1 = 1700  # Front-Right
+        t2 = 1700  # Front-Left
+        t3 = 1300  # Back-Right (negative coeff)
+        t4 = 1300  # Back-Left (negative coeff)
         
-        surge_left_pwm = full_forward
-        surge_right_pwm = full_forward
-        back_left_pwm = full_backward
-        back_right_pwm = full_backward
-        forward_left_pwm = 1500
-        forward_right_pwm = 1500
+        t5, t6 = depth_pwm
         
-        self.send_pwm_values(back_left_pwm, forward_right_pwm, surge_left_pwm, 
-                            surge_right_pwm, back_right_pwm, forward_left_pwm)
+        self.send_thrusters(t1, t2, t3, t4, t5, t6)
+        
+        self.get_logger().info(
+            f'🚀 PASSING: {distance_traveled:.2f}m / 3.5m',
+            throttle_duration_sec=0.5
+        )
     
     def completed_behavior(self):
-        self.send_pwm_values(1500, 1500, 1500, 1500, 1500, 1500)
+        """Stop all motion"""
+        self.send_neutral()
     
-    def send_pwm_values(self, back_left, forward_right, surge_left, surge_right, back_right, forward_left):
-        pwm_values = [back_left, forward_right, surge_left, surge_right, back_right, forward_left]
+    def send_thrusters(self, t1, t2, t3, t4, t5, t6):
+        """
+        Send commands to all 6 thrusters in URDF order
+        T1: Front-Right, T2: Front-Left, T3: Back-Right, T4: Back-Left
+        T5: Vertical-Right, T6: Vertical-Left
+        """
+        # Clamp all values
+        t1 = max(self.PWM_MIN, min(t1, self.PWM_MAX))
+        t2 = max(self.PWM_MIN, min(t2, self.PWM_MAX))
+        t3 = max(self.PWM_MIN, min(t3, self.PWM_MAX))
+        t4 = max(self.PWM_MIN, min(t4, self.PWM_MAX))
+        t5 = max(self.PWM_MIN, min(t5, self.PWM_MAX))
+        t6 = max(self.PWM_MIN, min(t6, self.PWM_MAX))
         
-        for i, pwm in enumerate(pwm_values):
-            pwm = max(self.PWM_MIN, min(pwm, self.PWM_MAX))
+        # Publish in URDF order: T1, T2, T3, T4, T5, T6
+        thrusters = [t1, t2, t3, t4, t5, t6]
+        
+        for i, pwm in enumerate(thrusters):
             msg = Float64()
             msg.data = float(pwm)
             self.thruster_pubs[i].publish(msg)
         
+        # Periodic logging
         if self.frame_count % 20 == 0:
-            pwm_str = '/'.join([str(int(p)) for p in pwm_values])
-            self.get_logger().info(f'{pwm_str}')
+            self.get_logger().info(
+                f'T1:{int(t1)} T2:{int(t2)} T3:{int(t3)} T4:{int(t4)} T5:{int(t5)} T6:{int(t6)}',
+                throttle_duration_sec=1.0
+            )
+    
+    def send_neutral(self):
+        """Send neutral PWM to all thrusters"""
+        self.send_thrusters(1500, 1500, 1500, 1500, 1500, 1500)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = WhiteGateNavigatorPWM()
+    node = WhiteGateNavigatorFixed()
     
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.send_pwm_values(1500, 1500, 1500, 1500, 1500, 1500)
+        node.send_neutral()
         node.destroy_node()
         rclpy.shutdown()
 
