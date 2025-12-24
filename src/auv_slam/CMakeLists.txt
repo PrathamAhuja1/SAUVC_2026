@@ -39,6 +39,7 @@ install(PROGRAMS
   scripts/task_coordinator_node.py
   scripts/demo.py
   scripts/prompt_flare_order.py
+  scripts/white_gate_navigator.py
   DESTINATION lib/${PROJECT_NAME})
 
 
