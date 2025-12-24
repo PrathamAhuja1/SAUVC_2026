@@ -408,7 +408,7 @@
 
 
     <include>
-      <uri>model://auv_slam/models/orca4_ign</uri>
+      <uri>model://auv_slam/models/varuna</uri>
       <pose>-10 0 -0.3 0 0 0</pose>
     </include>
 
