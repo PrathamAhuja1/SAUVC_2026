@@ -39,7 +39,7 @@ def generate_launch_description():
 
     # Correct the default_model_path to point to the *installed* URDF
     # CMakeLists.txt installs it to: share/auv_slam/urdf/
-    default_model_path = os.path.join(pkg_share_sub, 'urdf/orca4_description.urdf')
+    default_model_path = os.path.join(pkg_share_sub, 'urdf/varuna_description.urdf')
     
     default_rviz_config_path = os.path.join(pkg_share_sub, 'rviz/urdf_config.rviz')
     world_path = os.path.join(pkg_share_sub, "worlds/underwater_world_ign.sdf")
@@ -117,7 +117,7 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "-name",
-            "orca4_ign",
+            "varuna",
             "-topic",
             "robot_description",
             "-z",
